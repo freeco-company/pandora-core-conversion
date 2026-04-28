@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 
@@ -13,7 +13,7 @@ async def test_ingest_requires_jwt(client) -> None:
             "app_id": "doudou",
             "event_type": "app.opened",
             "payload": {},
-            "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            "occurred_at": datetime.now(tz=UTC).isoformat(),
         },
     )
     assert resp.status_code == 401
@@ -29,7 +29,7 @@ async def test_ingest_first_app_opened_creates_registered_transition(client, mak
             "app_id": "doudou",
             "event_type": "app.opened",
             "payload": {"first_open": True},
-            "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            "occurred_at": datetime.now(tz=UTC).isoformat(),
         },
     )
     assert resp.status_code == 201, resp.text
@@ -48,7 +48,7 @@ async def test_ingest_rejects_disallowed_product(client, make_jwt) -> None:
             "app_id": "doudou",
             "event_type": "app.opened",
             "payload": {},
-            "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            "occurred_at": datetime.now(tz=UTC).isoformat(),
         },
     )
     assert resp.status_code == 401

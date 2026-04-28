@@ -46,8 +46,12 @@ class ConversionEvent(Base):
     customer_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     app_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    payload: Mapped[dict] = mapped_column(_jsonb(), nullable=False, default=dict, server_default=text("'{}'"))
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(
+        _jsonb(), nullable=False, default=dict, server_default=text("'{}'")
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

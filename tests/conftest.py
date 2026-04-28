@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -48,8 +48,8 @@ async def db_engine():
 
 @pytest_asyncio.fixture
 async def db_session(db_engine) -> AsyncIterator:
-    Session = async_sessionmaker(db_engine, expire_on_commit=False, autoflush=False)
-    async with Session() as session:
+    sessionmaker = async_sessionmaker(db_engine, expire_on_commit=False, autoflush=False)
+    async with sessionmaker() as session:
         yield session
 
 
@@ -87,7 +87,7 @@ def make_jwt(rsa_keypair):
         ttl: int = 300,
         **extra,
     ) -> str:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         claims: dict = {
             "iss": settings.pandora_core_issuer,
             "sub": sub,
@@ -110,10 +110,10 @@ async def client(db_engine, rsa_keypair) -> AsyncIterator[httpx.AsyncClient]:
     """FastAPI test client with DB + JWT verifier overrides."""
     _, public_pem = rsa_keypair
 
-    Session = async_sessionmaker(db_engine, expire_on_commit=False, autoflush=False)
+    sessionmaker = async_sessionmaker(db_engine, expire_on_commit=False, autoflush=False)
 
     async def override_get_session():
-        async with Session() as session:
+        async with sessionmaker() as session:
             try:
                 yield session
             except Exception:

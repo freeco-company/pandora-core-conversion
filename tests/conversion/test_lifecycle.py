@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 
@@ -32,7 +32,7 @@ async def test_lifecycle_path_after_first_event(client, make_jwt) -> None:
             "app_id": "doudou",
             "event_type": "app.opened",
             "payload": {},
-            "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            "occurred_at": datetime.now(tz=UTC).isoformat(),
         },
     )
 
