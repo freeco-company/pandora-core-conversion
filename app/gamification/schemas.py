@@ -82,3 +82,25 @@ class SeedOutfitsResponse(BaseModel):
     inserted: int
     updated: int
     total: int
+
+
+class UserOutfitItem(BaseModel):
+    code: str
+    awarded_at: datetime
+    awarded_via: str
+
+
+class UserOutfitsResponse(BaseModel):
+    pandora_user_uuid: UUID
+    outfits: list[UserOutfitItem]
+    total: int
+
+
+class GrantOutfitRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=64)
+    awarded_via: str = Field(default="manual", min_length=1, max_length=32)
+
+
+class GrantOutfitResponse(BaseModel):
+    granted: bool
+    code: str

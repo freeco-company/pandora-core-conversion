@@ -14,12 +14,16 @@ from app.gamification.schemas import (
     AwardAchievementRequest,
     AwardAchievementResponse,
     EventIngestResponse,
+    GrantOutfitRequest,
+    GrantOutfitResponse,
     InternalEventIngestRequest,
     OutfitCatalogResponse,
     OutfitItem,
     ProgressionResponse,
     SeedAchievementsResponse,
     SeedOutfitsResponse,
+    UserOutfitItem,
+    UserOutfitsResponse,
 )
 
 router = APIRouter()
@@ -193,6 +197,56 @@ async def seed_outfits(
         updated=updated,
         total=len(catalog.OUTFIT_CATALOG),
     )
+
+
+@router.get(
+    "/internal/gamification/users/{uuid}/outfits",
+    response_model=UserOutfitsResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def list_user_outfits(
+    uuid: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> UserOutfitsResponse:
+    rows = await service.list_user_outfits(session, uuid)
+    return UserOutfitsResponse(
+        pandora_user_uuid=uuid,
+        outfits=[
+            UserOutfitItem(
+                code=r.code,
+                awarded_at=r.awarded_at,
+                awarded_via=r.awarded_via,
+            )
+            for r in rows
+        ],
+        total=len(rows),
+    )
+
+
+@router.post(
+    "/internal/gamification/users/{uuid}/outfits/grant",
+    response_model=GrantOutfitResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def grant_user_outfit(
+    uuid: UUID,
+    payload: GrantOutfitRequest,
+    session: AsyncSession = Depends(get_session),
+) -> GrantOutfitResponse:
+    """Manually grant an outfit. Idempotent on (uuid, code).
+
+    For non-level tiers — streak, fp_lifetime, cross-app — Apps call this
+    when their own detection fires.
+    """
+    try:
+        async with session.begin():
+            granted = await service.grant_outfit_manual(
+                session, uuid, payload.code, awarded_via=payload.awarded_via
+            )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return GrantOutfitResponse(granted=granted, code=payload.code)
 
 
 @router.post(

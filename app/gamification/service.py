@@ -18,6 +18,7 @@ from app.gamification.models import (
     Achievement,
     OutfitCatalog,
     UserAchievement,
+    UserOutfit,
     UserProgression,
     XpLedgerEntry,
 )
@@ -229,6 +230,13 @@ async def ingest_event_internal(
         session, progression, xp_delta, occurred_at=payload.occurred_at
     )
     if leveled_up_to is not None:
+        # ADR-009 §6 — auto-grant level-tier outfits the user just unlocked.
+        # Idempotent on (uuid, code), so repeat level-ups within the same level
+        # band are no-ops.
+        await _grant_level_unlocked_outfits(
+            session, payload.pandora_user_uuid, leveled_up_to
+        )
+
         # ADR-009 §2.2 — fan-out level-up via outbox so each App can mirror
         # group_level locally + drive its own celebration UX. We deliberately
         # don't fan-out every XP tick (would be N events per meal/card/etc);
@@ -372,6 +380,91 @@ async def award_achievement(
         xp_delta=xp_delta,
         leveled_up_to=leveled_up_to,
     )
+
+
+async def _grant_level_unlocked_outfits(
+    session: AsyncSession, user_uuid: UUID, new_level: int
+) -> list[str]:
+    """Grant any level-tier outfit the user newly qualifies for.
+
+    Returns the codes that were *newly* granted (already-owned outfits skipped).
+    Doesn't touch non-level tiers (those flow through manual grants).
+    """
+    candidates = catalog.level_unlock_outfits_up_to(new_level)
+    if not candidates:
+        return []
+    # Pull owned codes for this user once; cheap.
+    owned = (
+        await session.execute(
+            select(UserOutfit.code).where(UserOutfit.pandora_user_uuid == user_uuid)
+        )
+    ).scalars().all()
+    owned_set = set(owned)
+    granted: list[str] = []
+    for d in candidates:
+        if d.code in owned_set:
+            continue
+        # Catalog row may not yet exist in DB if seed wasn't run — skip silently
+        # rather than 500. Apps can call /outfits/seed once at deploy.
+        cat_row = (
+            await session.execute(
+                select(OutfitCatalog).where(OutfitCatalog.code == d.code)
+            )
+        ).scalar_one_or_none()
+        if cat_row is None:
+            continue
+        session.add(
+            UserOutfit(
+                pandora_user_uuid=user_uuid,
+                code=d.code,
+                awarded_via="level_up",
+            )
+        )
+        granted.append(d.code)
+    if granted:
+        await session.flush()
+    return granted
+
+
+async def list_user_outfits(
+    session: AsyncSession, user_uuid: UUID
+) -> list[UserOutfit]:
+    stmt = (
+        select(UserOutfit)
+        .where(UserOutfit.pandora_user_uuid == user_uuid)
+        .order_by(UserOutfit.awarded_at.asc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def grant_outfit_manual(
+    session: AsyncSession, user_uuid: UUID, code: str, awarded_via: str = "manual"
+) -> bool:
+    """Grant an outfit not driven by level (streak / fp / cross_app tiers).
+
+    Idempotent: returns True if newly granted, False if already owned.
+    Raises KeyError if the outfit is not in the catalog table.
+    """
+    cat_row = (
+        await session.execute(select(OutfitCatalog).where(OutfitCatalog.code == code))
+    ).scalar_one_or_none()
+    if cat_row is None:
+        raise KeyError(f"unknown outfit code: {code}")
+    existing = (
+        await session.execute(
+            select(UserOutfit).where(
+                UserOutfit.pandora_user_uuid == user_uuid,
+                UserOutfit.code == code,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return False
+    session.add(
+        UserOutfit(pandora_user_uuid=user_uuid, code=code, awarded_via=awarded_via)
+    )
+    await session.flush()
+    return True
 
 
 async def list_outfit_catalog(session: AsyncSession) -> list[OutfitCatalog]:
