@@ -22,8 +22,10 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 from app.db import Base
 
@@ -33,9 +35,35 @@ def _jsonb() -> JSON:
     return JSON().with_variant(JSONB(), "postgresql")
 
 
-def _uuid_col() -> UUID:
-    """UUID on PostgreSQL, fallback to String(36) on sqlite."""
-    return UUID(as_uuid=True).with_variant(String(36), "sqlite")
+class UUIDType(TypeDecorator):
+    """Cross-dialect UUID: native PG UUID + CHAR(36) on sqlite (with bind/load conversion)."""
+
+    impl = String(36)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):  # type: ignore[no-untyped-def]
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(PG_UUID(as_uuid=True))
+        return dialect.type_descriptor(String(36))
+
+    def process_bind_param(self, value, dialect):  # type: ignore[no-untyped-def]
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value
+        return str(value) if not isinstance(value, str) else value
+
+    def process_result_value(self, value, dialect):  # type: ignore[no-untyped-def]
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value
+        return uuid.UUID(value)
+
+
+def _uuid_col() -> UUIDType:
+    """UUID column — native on PostgreSQL, CHAR(36) string on sqlite."""
+    return UUIDType()
 
 
 class ConversionEvent(Base):
