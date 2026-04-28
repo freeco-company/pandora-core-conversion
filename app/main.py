@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from app.auth.jwt_verifier import get_jwt_verifier
 from app.config import get_settings
 from app.conversion.routes import router as conversion_router
+from app.gamification.routes import router as gamification_router
 from app.health.routes import router as health_router
 
 logger = logging.getLogger(__name__)
@@ -30,11 +31,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Pandora Core Conversion Service",
-    version="0.1.0",
-    description="Conversion funnel — 5-stage lifecycle (ADR-008 supersedes ADR-003).",
+    title="Pandora Core py-service",
+    version="0.2.0",
+    description=(
+        "Pandora group services. Modules: conversion (ADR-008 lifecycle), "
+        "gamification (ADR-009 cross-app XP / level / achievements)."
+    ),
     lifespan=lifespan,
 )
 
 app.include_router(health_router, tags=["health"])
 app.include_router(conversion_router, prefix="/api/v1", tags=["conversion"])
+app.include_router(gamification_router, prefix="/api/v1", tags=["gamification"])
