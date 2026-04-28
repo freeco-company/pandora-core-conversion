@@ -15,10 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gamification import catalog, outbox
 from app.gamification.models import (
+    Achievement,
+    UserAchievement,
     UserProgression,
     XpLedgerEntry,
 )
-from app.gamification.schemas import InternalEventIngestRequest
+from app.gamification.schemas import AwardAchievementRequest, InternalEventIngestRequest
 
 # Day boundary used for daily-cap calculation. Catalog spec says "00:00 UTC+8".
 TZ_UTC8 = timezone(timedelta(hours=8))
@@ -260,3 +262,156 @@ async def get_progression(
     stmt = select(UserProgression).where(UserProgression.pandora_user_uuid == user_uuid)
     res = await session.execute(stmt)
     return res.scalar_one_or_none()
+
+
+@dataclass
+class AwardOutcome:
+    awarded: bool
+    achievement: Achievement
+    progression: UserProgression
+    xp_delta: int
+    leveled_up_to: int | None
+
+
+async def award_achievement(
+    session: AsyncSession, payload: AwardAchievementRequest
+) -> AwardOutcome:
+    """Grant an achievement and award its tier-based XP reward.
+
+    Idempotent on (pandora_user_uuid, code) — granting the same achievement
+    twice returns awarded=False with the existing progression snapshot.
+    """
+    # Look up the catalog row (must be seeded first via seed endpoint).
+    ach_stmt = select(Achievement).where(Achievement.code == payload.code)
+    achievement = (await session.execute(ach_stmt)).scalar_one_or_none()
+    if achievement is None:
+        raise KeyError(f"unknown achievement code: {payload.code}")
+
+    # Idempotent grant: composite PK on user_achievements
+    existing_stmt = select(UserAchievement).where(
+        UserAchievement.pandora_user_uuid == payload.pandora_user_uuid,
+        UserAchievement.code == payload.code,
+    )
+    existing = (await session.execute(existing_stmt)).scalar_one_or_none()
+    if existing is not None:
+        progression = await _get_or_create_progression(session, payload.pandora_user_uuid)
+        return AwardOutcome(
+            awarded=False,
+            achievement=achievement,
+            progression=progression,
+            xp_delta=0,
+            leveled_up_to=None,
+        )
+
+    grant = UserAchievement(
+        pandora_user_uuid=payload.pandora_user_uuid,
+        code=payload.code,
+        source_app=payload.source_app,
+    )
+    session.add(grant)
+    await session.flush()
+
+    # Award the tier XP via the ledger so progression and outbox stay coherent.
+    xp_delta = int(achievement.xp_reward)
+    progression = await _get_or_create_progression(session, payload.pandora_user_uuid)
+    leveled_up_to: int | None = None
+    if xp_delta > 0:
+        entry = XpLedgerEntry(
+            pandora_user_uuid=payload.pandora_user_uuid,
+            source_app=payload.source_app,
+            event_kind=f"achievement.{payload.code}",
+            idempotency_key=payload.idempotency_key,
+            xp_delta=xp_delta,
+            occurred_at=payload.occurred_at,
+            extra_metadata={"achievement_code": payload.code, "tier": achievement.tier},
+        )
+        session.add(entry)
+        await session.flush()
+        leveled_up_to = await _apply_xp_to_progression(
+            session, progression, xp_delta, occurred_at=payload.occurred_at
+        )
+        if leveled_up_to is not None:
+            await outbox.enqueue_event(
+                session,
+                event_type="gamification.level_up",
+                pandora_user_uuid=payload.pandora_user_uuid,
+                payload={
+                    "new_level": leveled_up_to,
+                    "total_xp": progression.total_xp,
+                    "level_name_zh": progression.level_name_zh,
+                    "level_name_en": progression.level_name_en,
+                    "trigger_source_app": payload.source_app,
+                    "trigger_event_kind": f"achievement.{payload.code}",
+                    "trigger_ledger_id": entry.id,
+                    "occurred_at": payload.occurred_at.isoformat(),
+                },
+                ledger_id=entry.id,
+            )
+
+    # Always fan out the achievement event so apps can show the badge.
+    await outbox.enqueue_event(
+        session,
+        event_type="gamification.achievement_awarded",
+        pandora_user_uuid=payload.pandora_user_uuid,
+        payload={
+            "code": payload.code,
+            "name": achievement.name,
+            "description": achievement.description,
+            "tier": achievement.tier,
+            "source_app": achievement.source_app,
+            "xp_reward": xp_delta,
+            "occurred_at": payload.occurred_at.isoformat(),
+        },
+    )
+
+    return AwardOutcome(
+        awarded=True,
+        achievement=achievement,
+        progression=progression,
+        xp_delta=xp_delta,
+        leveled_up_to=leveled_up_to,
+    )
+
+
+async def seed_achievement_catalog(session: AsyncSession) -> tuple[int, int]:
+    """Upsert the built-in catalog. Returns (inserted, updated)."""
+    inserted = 0
+    updated = 0
+    for code, ach_def in catalog.ACHIEVEMENT_CATALOG.items():
+        xp = catalog.xp_reward_for_tier(ach_def.tier)
+        existing = (
+            await session.execute(select(Achievement).where(Achievement.code == code))
+        ).scalar_one_or_none()
+        if existing is None:
+            session.add(
+                Achievement(
+                    code=ach_def.code,
+                    name=ach_def.name,
+                    description=ach_def.description,
+                    source_app=ach_def.source_app,
+                    tier=ach_def.tier,
+                    xp_reward=xp,
+                )
+            )
+            inserted += 1
+        else:
+            changed = False
+            if existing.name != ach_def.name:
+                existing.name = ach_def.name
+                changed = True
+            if existing.description != ach_def.description:
+                existing.description = ach_def.description
+                changed = True
+            if existing.source_app != ach_def.source_app:
+                existing.source_app = ach_def.source_app
+                changed = True
+            if existing.tier != ach_def.tier:
+                existing.tier = ach_def.tier
+                changed = True
+            if existing.xp_reward != xp:
+                existing.xp_reward = xp
+                changed = True
+            if changed:
+                updated += 1
+    await session.flush()
+    return inserted, updated

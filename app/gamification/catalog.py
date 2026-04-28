@@ -200,3 +200,79 @@ def get_event_rule(event_kind: str) -> EventRule:
     if rule is None:
         raise KeyError(f"unknown event_kind: {event_kind}")
     return rule
+
+
+# ── Achievement catalog (catalog §5) ──────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class AchievementDef:
+    """Built-in achievement definition. Gets seeded into the gamification_achievements
+    table by the seed admin endpoint. Keys are stable; renames break dashboards."""
+
+    code: str
+    name: str
+    description: str
+    source_app: str
+    tier: str  # bronze / silver / gold / legendary
+
+
+# Tier → XP reward (catalog §5.1)
+TIER_XP_REWARD: dict[str, int] = {
+    "bronze": 30,
+    "silver": 100,
+    "gold": 300,
+    "legendary": 1000,
+}
+
+
+# Subset of catalog §5.2 + a few cross-app group achievements. Add freely; the
+# seed endpoint upserts new entries and updates name/description/tier of existing
+# ones (xp_reward is derived from tier each seed).
+ACHIEVEMENT_CATALOG: dict[str, AchievementDef] = {
+    # 朵朵 (catalog §5.2)
+    "dodo.first_meal": AchievementDef(
+        "dodo.first_meal", "第一餐", "記錄了第一筆餐食", "dodo", "bronze",
+    ),
+    "dodo.streak_7": AchievementDef(
+        "dodo.streak_7", "一週有你", "連續 7 天打卡", "dodo", "silver",
+    ),
+    "dodo.streak_30": AchievementDef(
+        "dodo.streak_30", "一個月的陪伴", "連續 30 天打卡", "dodo", "gold",
+    ),
+    "dodo.foodie_10": AchievementDef(
+        "dodo.foodie_10", "美食探索家", "圖鑑收集 10 種食物", "dodo", "silver",
+    ),
+    # 婕樂纖 (catalog §5.2)
+    "jerosse.first_browse": AchievementDef(
+        "jerosse.first_browse", "好奇探索家", "第一次逛婕樂纖", "jerosse", "bronze",
+    ),
+    "jerosse.first_order": AchievementDef(
+        "jerosse.first_order", "首購達成", "第一筆婕樂纖訂單", "jerosse", "silver",
+    ),
+    "jerosse.spend_10k": AchievementDef(
+        "jerosse.spend_10k", "金級夥伴", "累積消費滿 1 萬", "jerosse", "gold",
+    ),
+    # 跨 App group achievements (catalog §5.2)
+    "group.multi_app_explorer": AchievementDef(
+        "group.multi_app_explorer", "跨界探索家",
+        "體驗 3 個以上潘朵拉系列 App", "group", "gold",
+    ),
+    "group.full_constellation": AchievementDef(
+        "group.full_constellation", "潘朵拉全收",
+        "集滿所有潘朵拉系列 App 的首次成就", "group", "legendary",
+    ),
+}
+
+
+def get_achievement_def(code: str) -> AchievementDef:
+    ach = ACHIEVEMENT_CATALOG.get(code)
+    if ach is None:
+        raise KeyError(f"unknown achievement code: {code}")
+    return ach
+
+
+def xp_reward_for_tier(tier: str) -> int:
+    if tier not in TIER_XP_REWARD:
+        raise ValueError(f"invalid tier: {tier} (expected one of {list(TIER_XP_REWARD)})")
+    return TIER_XP_REWARD[tier]
