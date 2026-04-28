@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.internal import require_internal_secret
 from app.auth.jwt_verifier import VerifiedClaims
 from app.auth.middleware import require_jwt
 from app.conversion import lifecycle, service
 from app.conversion.schemas import (
     EventIngestRequest,
     EventIngestResponse,
+    FranchiseeQualifyRequest,
+    FunnelMetricsResponse,
+    FunnelStageMetric,
+    InternalEventIngestRequest,
     LifecycleResponse,
     LifecycleTransitionItem,
     LifecycleTransitionRequest,
@@ -123,6 +129,90 @@ async def get_training(
             )
             for r in rows
         ],
+    )
+
+
+@router.post(
+    "/internal/events",
+    response_model=EventIngestResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def ingest_event_internal(
+    payload: InternalEventIngestRequest,
+    session: AsyncSession = Depends(get_session),
+) -> EventIngestResponse:
+    """Service-to-service event ingest (HMAC).
+
+    Used by App backends (e.g. dodo) to publish events on behalf of a user
+    without round-tripping the user's platform JWT. The body MUST carry
+    `pandora_user_uuid`.
+    """
+    async with session.begin():
+        event, transition = await service.ingest_event_internal(session, payload)
+    return EventIngestResponse(
+        id=event.id,
+        lifecycle_transition=transition.to_status if transition.fired else None,
+    )
+
+
+@router.post(
+    "/internal/admin/users/{uuid}/qualify-franchisee",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def qualify_franchisee(
+    uuid: UUID,
+    payload: FranchiseeQualifyRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Admin endpoint — manually mark a user as `franchisee`.
+
+    ADR-003 §7.1：fairysalebox 對接延後，加盟資格目前由婕樂纖團隊人工確認後
+    呼叫本端點完成 lifecycle 升級。後續接 fairysalebox 自動化時，可保留本端點
+    作 fallback / 對帳路徑。
+    """
+    metadata = {
+        "source": "admin_qualify_franchisee",
+        "qualified_at": datetime.utcnow().isoformat(),
+    }
+    if payload.plan_chosen:
+        metadata["plan_chosen"] = payload.plan_chosen
+    if payload.note:
+        metadata["note"] = payload.note
+    async with session.begin():
+        transition = await lifecycle.force_transition(
+            session, uuid, "franchisee", metadata=metadata
+        )
+    return {
+        "id": transition.id,
+        "from_status": transition.from_status,
+        "to_status": transition.to_status,
+    }
+
+
+@router.get(
+    "/funnel/metrics",
+    response_model=FunnelMetricsResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def funnel_metrics(
+    session: AsyncSession = Depends(get_session),
+) -> FunnelMetricsResponse:
+    """Lifecycle stage counts (current status per uuid).
+
+    v1: counts users that have at least one transition row. Visitors that
+    never registered an event are not represented.
+    """
+    counts = await service.funnel_metrics(session)
+    stages = [
+        FunnelStageMetric(status=s, count=counts.get(s, 0))
+        for s in lifecycle.STATES
+    ]
+    total = sum(counts.values())
+    return FunnelMetricsResponse(
+        stages=stages,
+        total_users_with_lifecycle=total,
     )
 
 

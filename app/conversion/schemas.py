@@ -83,3 +83,40 @@ class TrainingProgressUpdateRequest(BaseModel):
     quiz_score: int | None = Field(default=None, ge=0, le=100)
 
 
+# ── Internal endpoints (service-to-service, not user-scoped) ───────────
+
+
+class InternalEventIngestRequest(BaseModel):
+    """Used by App backends to publish events on behalf of a user.
+
+    Auth: X-Internal-Secret header. The body MUST include `pandora_user_uuid`
+    because there's no JWT subject to derive it from.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pandora_user_uuid: UUID
+    app_id: str = Field(min_length=1, max_length=32)
+    event_type: str = Field(min_length=1, max_length=64)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    occurred_at: datetime
+    customer_id: int | None = None
+
+
+class FranchiseeQualifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_chosen: str | None = Field(default=None, max_length=16)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class FunnelStageMetric(BaseModel):
+    status: str
+    count: int
+
+
+class FunnelMetricsResponse(BaseModel):
+    stages: list[FunnelStageMetric]
+    total_users_with_lifecycle: int
+
+
