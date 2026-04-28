@@ -69,7 +69,7 @@ def _uuid_col() -> UUIDType:
 class ConversionEvent(Base):
     __tablename__ = "conversion_events"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
     pandora_user_uuid: Mapped[uuid.UUID] = mapped_column(_uuid_col(), nullable=False, index=True)
     customer_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     app_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
@@ -88,7 +88,7 @@ class ConversionEvent(Base):
 class LifecycleTransition(Base):
     __tablename__ = "lifecycle_transitions"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
     pandora_user_uuid: Mapped[uuid.UUID] = mapped_column(_uuid_col(), nullable=False, index=True)
     from_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     to_status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
@@ -123,7 +123,7 @@ class FranchiseApplication(Base):
         UniqueConstraint("pandora_user_uuid", name="uq_franchise_applications_uuid"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
     pandora_user_uuid: Mapped[uuid.UUID] = mapped_column(_uuid_col(), nullable=False, index=True)
     source_app: Mapped[str | None] = mapped_column(String(32), nullable=True)
     source_content_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
