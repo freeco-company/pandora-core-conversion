@@ -63,3 +63,22 @@ class SeedAchievementsResponse(BaseModel):
     inserted: int
     updated: int
     total: int
+
+
+class OutfitItem(BaseModel):
+    code: str
+    name: str
+    unlock_condition: str
+    tier: str
+    species_compat: list[str]
+
+
+class OutfitCatalogResponse(BaseModel):
+    outfits: list[OutfitItem]
+    total: int
+
+
+class SeedOutfitsResponse(BaseModel):
+    inserted: int
+    updated: int
+    total: int

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.gamification import catalog, outbox
 from app.gamification.models import (
     Achievement,
+    OutfitCatalog,
     UserAchievement,
     UserProgression,
     XpLedgerEntry,
@@ -371,6 +372,51 @@ async def award_achievement(
         xp_delta=xp_delta,
         leveled_up_to=leveled_up_to,
     )
+
+
+async def list_outfit_catalog(session: AsyncSession) -> list[OutfitCatalog]:
+    stmt = select(OutfitCatalog).order_by(OutfitCatalog.tier, OutfitCatalog.code)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def seed_outfit_catalog(session: AsyncSession) -> tuple[int, int]:
+    """Upsert OUTFIT_CATALOG into the DB. Returns (inserted, updated)."""
+    inserted = 0
+    updated = 0
+    for code, out_def in catalog.OUTFIT_CATALOG.items():
+        existing = (
+            await session.execute(select(OutfitCatalog).where(OutfitCatalog.code == code))
+        ).scalar_one_or_none()
+        species_compat_list = list(out_def.species_compat)
+        if existing is None:
+            session.add(
+                OutfitCatalog(
+                    code=out_def.code,
+                    name=out_def.name,
+                    unlock_condition=out_def.unlock_condition,
+                    tier=out_def.tier,
+                    species_compat=species_compat_list,
+                )
+            )
+            inserted += 1
+        else:
+            changed = False
+            if existing.name != out_def.name:
+                existing.name = out_def.name
+                changed = True
+            if existing.unlock_condition != out_def.unlock_condition:
+                existing.unlock_condition = out_def.unlock_condition
+                changed = True
+            if existing.tier != out_def.tier:
+                existing.tier = out_def.tier
+                changed = True
+            if list(existing.species_compat or []) != species_compat_list:
+                existing.species_compat = species_compat_list
+                changed = True
+            if changed:
+                updated += 1
+    await session.flush()
+    return inserted, updated
 
 
 async def seed_achievement_catalog(session: AsyncSession) -> tuple[int, int]:

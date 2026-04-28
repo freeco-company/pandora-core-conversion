@@ -15,8 +15,11 @@ from app.gamification.schemas import (
     AwardAchievementResponse,
     EventIngestResponse,
     InternalEventIngestRequest,
+    OutfitCatalogResponse,
+    OutfitItem,
     ProgressionResponse,
     SeedAchievementsResponse,
+    SeedOutfitsResponse,
 )
 
 router = APIRouter()
@@ -144,6 +147,51 @@ async def seed_achievements(
         inserted=inserted,
         updated=updated,
         total=len(catalog.ACHIEVEMENT_CATALOG),
+    )
+
+
+@router.get(
+    "/internal/gamification/outfits",
+    response_model=OutfitCatalogResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def list_outfits(
+    session: AsyncSession = Depends(get_session),
+) -> OutfitCatalogResponse:
+    """List the seeded outfit catalog. Apps fetch this at startup to render
+    UX hints ("unlock at LV.5") and the equip picker.
+    """
+    rows = await service.list_outfit_catalog(session)
+    return OutfitCatalogResponse(
+        outfits=[
+            OutfitItem(
+                code=r.code,
+                name=r.name,
+                unlock_condition=r.unlock_condition,
+                tier=r.tier,
+                species_compat=list(r.species_compat or []),
+            )
+            for r in rows
+        ],
+        total=len(rows),
+    )
+
+
+@router.post(
+    "/internal/gamification/outfits/seed",
+    response_model=SeedOutfitsResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def seed_outfits(
+    session: AsyncSession = Depends(get_session),
+) -> SeedOutfitsResponse:
+    """Upsert the built-in OUTFIT_CATALOG into DB. Idempotent."""
+    async with session.begin():
+        inserted, updated = await service.seed_outfit_catalog(session)
+    return SeedOutfitsResponse(
+        inserted=inserted,
+        updated=updated,
+        total=len(catalog.OUTFIT_CATALOG),
     )
 
 
