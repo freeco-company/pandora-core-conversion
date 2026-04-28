@@ -25,6 +25,7 @@ import hmac
 import logging
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
@@ -34,9 +35,16 @@ from app.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-# Mothership endpoint path. Mirrors the route registered in
+# Mothership endpoint paths. Mirrors routes registered in
 # pandora.js-store backend/routes/api.php.
 _PATH_TEMPLATE = "/api/internal/conversion/customer-orders/{uuid}"
+# ADR-008 §2.2 (a) — monthly purchase history, used by the
+# franchisee_self_use → franchisee_active rule. NOTE: this endpoint does
+# not exist on母艦 yet (separate PR). HttpMothershipOrderClient handles
+# 404 by returning zeros so the rule silently no-ops until母艦 ships it.
+_MONTHLY_PATH_TEMPLATE = (
+    "/api/internal/conversion/customer-monthly-purchases/{uuid}"
+)
 
 
 @dataclass
@@ -53,9 +61,13 @@ class MothershipOrderClient(Protocol):
         self, pandora_user_uuid: UUID
     ) -> MothershipOrderSummary: ...
 
+    async def get_monthly_purchases(
+        self, pandora_user_uuid: UUID, months: int = 3
+    ) -> list[Decimal]: ...
+
 
 class StubMothershipOrderClient:
-    """Returns 0 orders unconditionally. Safe default when 母艦 isn't wired up."""
+    """Returns zero data unconditionally. Safe default when 母艦 isn't wired up."""
 
     async def get_order_summary(
         self, pandora_user_uuid: UUID
@@ -65,6 +77,13 @@ class StubMothershipOrderClient:
             recent_orders=0,
             lifetime_orders=0,
         )
+
+    async def get_monthly_purchases(
+        self, pandora_user_uuid: UUID, months: int = 3
+    ) -> list[Decimal]:
+        # ADR-008 §2.2 — franchisee_active path (a) silently no-ops when母艦
+        # isn't wired (or hasn't shipped the endpoint yet).
+        return [Decimal("0")] * months
 
 
 class HttpMothershipOrderClient:
@@ -155,6 +174,90 @@ class HttpMothershipOrderClient:
             recent_orders=int(data.get("recent_orders_90d", 0)),
             lifetime_orders=int(data.get("total_orders", 0)),
         )
+
+    async def get_monthly_purchases(
+        self, pandora_user_uuid: UUID, months: int = 3
+    ) -> list[Decimal]:
+        """Fetch last N months of 進貨總額 from母艦 (ADR-008 §2.2 path a).
+
+        母艦 endpoint contract (TBD by母艦 PR):
+
+            GET /api/internal/conversion/customer-monthly-purchases/{uuid}?months=N
+            -> 200 {"months": [{"year_month": "2026-02", "amount": "32500.00"}, ...]}
+
+        Order: most recent month first, but we sort defensively here.
+
+        Resilience: 404 (endpoint not yet shipped or uuid unknown) → all
+        zeros. 5xx / timeout → retry once → all zeros. The franchisee_active
+        rule treats zeros as "condition not met" which is the conservative
+        default while母艦 catches up.
+        """
+        path = _MONTHLY_PATH_TEMPLATE.format(uuid=str(pandora_user_uuid))
+        url = f"{self._base_url}{path}?months={months}"
+
+        ts = str(int(time.time()))
+        # Path used in HMAC base does not include query string — mirrors
+        # 母艦 VerifyConversionInternalSignature middleware (see ADR-003 §3.2).
+        base = f"{ts}.GET.{path}"
+        sig = hmac.new(
+            self._secret.encode("utf-8"),
+            base.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        headers = {
+            "X-Pandora-Timestamp": ts,
+            "X-Pandora-Signature": sig,
+            "Accept": "application/json",
+        }
+
+        zero_fallback = [Decimal("0")] * months
+
+        try:
+            response = await self._fetch_with_retry(url, headers)
+        except httpx.HTTPError as e:
+            logger.warning(
+                "[MothershipClient] monthly-purchases network error, "
+                "falling back to zeros: %s",
+                e,
+            )
+            return zero_fallback
+
+        if response.status_code == 404:
+            # Endpoint not yet shipped on母艦 OR uuid unmapped — both
+            # produce zeros so the rule silently no-ops.
+            return zero_fallback
+
+        if response.status_code >= 500:
+            logger.warning(
+                "[MothershipClient] monthly-purchases %s after retry, "
+                "falling back to zeros",
+                response.status_code,
+            )
+            return zero_fallback
+
+        if response.status_code != 200:
+            logger.warning(
+                "[MothershipClient] monthly-purchases unexpected %s, "
+                "falling back to zeros: %s",
+                response.status_code,
+                response.text[:200],
+            )
+            return zero_fallback
+
+        try:
+            data = response.json()
+            items = data.get("months", [])
+            parsed = [Decimal(str(item.get("amount", "0"))) for item in items]
+        except (ValueError, ArithmeticError, AttributeError) as e:
+            logger.warning(
+                "[MothershipClient] monthly-purchases parse error: %s", e
+            )
+            return zero_fallback
+
+        # Pad / truncate to exactly `months` entries.
+        if len(parsed) < months:
+            parsed = parsed + [Decimal("0")] * (months - len(parsed))
+        return parsed[:months]
 
     async def _fetch_with_retry(
         self, url: str, headers: dict[str, str]

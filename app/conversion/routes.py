@@ -22,9 +22,6 @@ from app.conversion.schemas import (
     LifecycleResponse,
     LifecycleTransitionItem,
     LifecycleTransitionRequest,
-    TrainingProgressItem,
-    TrainingProgressResponse,
-    TrainingProgressUpdateRequest,
 )
 from app.db import get_session
 
@@ -109,29 +106,6 @@ async def force_lifecycle_transition(
     }
 
 
-@router.get("/users/{uuid}/training", response_model=TrainingProgressResponse)
-async def get_training(
-    uuid: UUID,
-    claims: VerifiedClaims = Depends(require_jwt),
-    session: AsyncSession = Depends(get_session),
-) -> TrainingProgressResponse:
-    if str(uuid) != claims.sub:
-        raise HTTPException(status_code=403, detail="forbidden")
-    rows = await service.get_training_progress(session, uuid)
-    return TrainingProgressResponse(
-        pandora_user_uuid=uuid,
-        chapters=[
-            TrainingProgressItem(
-                chapter_id=r.chapter_id,
-                completed_at=r.completed_at,
-                quiz_score=r.quiz_score,
-                attempts=r.attempts,
-            )
-            for r in rows
-        ],
-    )
-
-
 @router.post(
     "/internal/events",
     response_model=EventIngestResponse,
@@ -157,23 +131,22 @@ async def ingest_event_internal(
 
 
 @router.post(
-    "/internal/admin/users/{uuid}/qualify-franchisee",
+    "/internal/admin/users/{uuid}/qualify-franchisee-self-use",
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_internal_secret)],
 )
-async def qualify_franchisee(
+async def qualify_franchisee_self_use(
     uuid: UUID,
     payload: FranchiseeQualifyRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Admin endpoint — manually mark a user as `franchisee`.
+    """Admin endpoint — manually mark a user as `franchisee_self_use`.
 
-    ADR-003 §7.1：fairysalebox 對接延後，加盟資格目前由婕樂纖團隊人工確認後
-    呼叫本端點完成 lifecycle 升級。後續接 fairysalebox 自動化時，可保留本端點
-    作 fallback / 對帳路徑。
+    ADR-008 §2.3：first-order signal 由婕樂纖後台 webhook 自動推進；本端點作為
+    fallback / 對帳路徑（webhook 漏掉、人工確認等情境）。
     """
-    metadata = {
-        "source": "admin_qualify_franchisee",
+    metadata: dict = {
+        "source": "admin_qualify_franchisee_self_use",
         "qualified_at": datetime.utcnow().isoformat(),
     }
     if payload.plan_chosen:
@@ -182,7 +155,7 @@ async def qualify_franchisee(
         metadata["note"] = payload.note
     async with session.begin():
         transition = await lifecycle.force_transition(
-            session, uuid, "franchisee", metadata=metadata
+            session, uuid, "franchisee_self_use", metadata=metadata
         )
     return {
         "id": transition.id,
@@ -201,8 +174,7 @@ async def funnel_metrics(
 ) -> FunnelMetricsResponse:
     """Lifecycle stage counts (current status per uuid).
 
-    v1: counts users that have at least one transition row. Visitors that
-    never registered an event are not represented.
+    ADR-008 §2.2 — returns 5 stages (was 6 in ADR-003).
     """
     counts = await service.funnel_metrics(session)
     stages = [
@@ -214,28 +186,3 @@ async def funnel_metrics(
         stages=stages,
         total_users_with_lifecycle=total,
     )
-
-
-@router.post("/users/{uuid}/training", status_code=status.HTTP_200_OK)
-async def update_training(
-    uuid: UUID,
-    payload: TrainingProgressUpdateRequest,
-    claims: VerifiedClaims = Depends(require_jwt),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    if str(uuid) != claims.sub:
-        raise HTTPException(status_code=403, detail="forbidden")
-    async with session.begin():
-        row = await service.upsert_training_progress(
-            session,
-            uuid,
-            payload.chapter_id,
-            completed=payload.completed,
-            quiz_score=payload.quiz_score,
-        )
-    return {
-        "chapter_id": row.chapter_id,
-        "completed_at": row.completed_at,
-        "quiz_score": row.quiz_score,
-        "attempts": row.attempts,
-    }

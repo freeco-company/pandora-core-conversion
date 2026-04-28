@@ -1,16 +1,20 @@
-"""Lifecycle state machine. ADR-003 §2.2.
+"""Lifecycle state machine. ADR-008 §2.2 (supersedes ADR-003).
 
-Implements the four event-driven transitions:
+Implements four event-driven transitions across five stages:
 
-    visitor    -> registered    on first event for the uuid
-    registered -> engaged       on subscription event OR ≥60 distinct event-days
-    engaged    -> loyalist      on ≥3 distinct active months in last 90d
-                                AND ≥2 母艦 repeat purchases (stubbed)
-    loyalist   -> applicant     on franchise.cta_click
+    visitor              -> loyalist               on 14-day continuous engagement
+                                                   OR Premium subscription active
+    loyalist             -> applicant              on franchise.cta_click
+                                                   OR mothership consultation form
+    applicant            -> franchisee_self_use    on mothership first order ≥ NT$6,600
+    franchisee_self_use  -> franchisee_active      on (a) 連續 3 個月月進貨 > NT$30K
+                                                   OR (b) academy operator portal click
 
-`applicant -> franchisee` is intentionally NOT auto-fired by rules — per
-ADR-003 §7.1 婕樂纖團隊人工 / admin endpoint 處理。See
-`force_transition` and routes.qualify_franchisee.
+ADR-003 stages `registered` / `engaged` / `franchisee` 已作廢。仙女學院
+training_progress 訊號 (`academy.training_progress`) 也作廢 — 段 1 不依賴
+仙女學院。詳見 ADR-008 §3.2。
+
+`force_transition` 仍保留作 admin / 對帳路徑（routes.qualify_franchisee_self_use）。
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -27,15 +32,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.conversion.models import ConversionEvent, LifecycleTransition
 from app.conversion.mothership import get_mothership_client
 
-# Allowed states (ADR-003 §2.2)
-STATES = ["visitor", "registered", "engaged", "loyalist", "applicant", "franchisee"]
+# Allowed states (ADR-008 §2.2). Order matters for funnel reporting.
+STATES = [
+    "visitor",
+    "loyalist",
+    "applicant",
+    "franchisee_self_use",
+    "franchisee_active",
+]
 
-# Tunables (kept module-level for now — env-config can come later if needed).
-ENGAGED_DAYS_THRESHOLD = 60
-LOYALIST_LOOKBACK_DAYS = 90
-LOYALIST_ACTIVE_MONTHS_REQUIRED = 3
-LOYALIST_RECENT_ORDERS_REQUIRED = 2
-SUBSCRIPTION_EVENT_TYPES = {"subscription.activated", "subscription.renewed"}
+# Tunables (ADR-008 §2.2 — initial defaults, tune post-launch).
+VISITOR_LOYALIST_CONTINUOUS_DAYS = 14
+FRANCHISEE_ACTIVE_MONTHLY_THRESHOLD = Decimal("30000")
+FRANCHISEE_ACTIVE_REQUIRED_MONTHS = 3
+FRANCHISEE_SELF_USE_FIRST_ORDER_THRESHOLD = Decimal("6600")
+
+# Event-type constants. Treat as the public contract — see schemas.EVENT_TYPES.
+EVT_ENGAGEMENT_DEEP = "engagement.deep"
+EVT_SUBSCRIPTION_PREMIUM_ACTIVE = "subscription.premium_active"
+EVT_FRANCHISE_CTA_CLICK = "franchise.cta_click"
+EVT_MOTHERSHIP_CONSULTATION_SUBMITTED = "mothership.consultation_submitted"
+EVT_MOTHERSHIP_FIRST_ORDER = "mothership.first_order"
+EVT_ACADEMY_OPERATOR_PORTAL_CLICK = "academy.operator_portal_click"
 
 
 @dataclass
@@ -50,130 +68,162 @@ class TransitionContext:
 TransitionRule = Callable[[TransitionContext], Awaitable[str | None]]
 
 
-# ── visitor -> registered ──────────────────────────────────────────────
+# ── visitor -> loyalist ────────────────────────────────────────────────
 
 
-async def rule_first_app_opened(ctx: TransitionContext) -> str | None:
-    """visitor -> registered on first app.opened event for this uuid."""
-    if ctx.event.event_type != "app.opened":
-        return None
+async def rule_visitor_to_loyalist(ctx: TransitionContext) -> str | None:
+    """visitor -> loyalist (ADR-008 §2.2 transition #1).
+
+    Two paths (OR):
+      A) `subscription.premium_active` event arrives — immediate signal.
+      B) ≥ VISITOR_LOYALIST_CONTINUOUS_DAYS distinct calendar days of
+         `engagement.deep` events ending on the trigger event's day. We
+         require *continuous* days (no gaps) — a one-day gap resets the
+         streak.
+
+    Only evaluated when current_status is None or "visitor". A user that's
+    already past loyalist won't regress.
+    """
     if ctx.current_status not in (None, "visitor"):
         return None
-    # First event check: any prior event for this uuid?
-    stmt = (
-        select(ConversionEvent.id)
-        .where(
-            ConversionEvent.pandora_user_uuid == ctx.pandora_user_uuid,
-            ConversionEvent.id != ctx.event.id,
-        )
-        .limit(1)
-    )
-    res = await ctx.session.execute(stmt)
-    if res.scalar() is None:
-        return "registered"
-    return None
 
+    if ctx.event.event_type == EVT_SUBSCRIPTION_PREMIUM_ACTIVE:
+        return "loyalist"
 
-# ── registered -> engaged ──────────────────────────────────────────────
-
-
-async def rule_engaged(ctx: TransitionContext) -> str | None:
-    """registered -> engaged.
-
-    Two paths:
-      A) Any subscription.* event arrives (instant trigger).
-      B) Distinct activity-day count for this uuid reaches ENGAGED_DAYS_THRESHOLD.
-
-    Path B uses `DATE(occurred_at)` aggregation across all events. Cross-DB
-    safe via `func.date(...)`. Cost: one COUNT(DISTINCT) per relevant event,
-    but only after `current_status == 'registered'` so the hot path stays cheap.
-    """
-    if ctx.current_status != "registered":
+    if ctx.event.event_type != EVT_ENGAGEMENT_DEEP:
         return None
 
-    if ctx.event.event_type in SUBSCRIPTION_EVENT_TYPES:
-        return "engaged"
-
-    # Path B: distinct activity days
-    stmt = select(
-        func.count(distinct(func.date(ConversionEvent.occurred_at)))
-    ).where(ConversionEvent.pandora_user_uuid == ctx.pandora_user_uuid)
-    distinct_days = (await ctx.session.execute(stmt)).scalar() or 0
-    if distinct_days >= ENGAGED_DAYS_THRESHOLD:
-        return "engaged"
-    return None
-
-
-# ── engaged -> loyalist ────────────────────────────────────────────────
-
-
-async def rule_loyalist(ctx: TransitionContext) -> str | None:
-    """engaged -> loyalist.
-
-    Conditions (both required, ADR-003 §2.2):
-      1. ≥ LOYALIST_ACTIVE_MONTHS_REQUIRED distinct active months in the last
-         LOYALIST_LOOKBACK_DAYS window. We approximate "month" by year+month
-         of `occurred_at`.
-      2. ≥ LOYALIST_RECENT_ORDERS_REQUIRED 母艦 repeat purchases — currently
-         stubbed (returns 0). With the stub this branch never fires; v1 by
-         design is conservative (see ADR-003 §6 risk mitigation).
-
-    Note: we evaluate on every event while in `engaged` state — could be
-    optimised later (e.g. only on engagement-significant events) but for now
-    correctness > cost; aggregation is a single grouped COUNT.
-    """
-    if ctx.current_status != "engaged":
-        return None
-
-    cutoff = datetime.utcnow() - timedelta(days=LOYALIST_LOOKBACK_DAYS)
-    # Cross-dialect month bucketing: pull distinct DATE(occurred_at), bucket
-    # by (year, month) in Python. Cardinality is small (≤ LOOKBACK_DAYS rows).
+    # Path B: continuous-day streak from engagement.deep events.
+    # Pull distinct days within the lookback window (a bit more than the
+    # required streak, to detect gap-resets at the boundary).
+    lookback_days = VISITOR_LOYALIST_CONTINUOUS_DAYS + 7
+    cutoff = datetime.utcnow() - timedelta(days=lookback_days)
     stmt = (
         select(distinct(func.date(ConversionEvent.occurred_at)))
         .where(
             ConversionEvent.pandora_user_uuid == ctx.pandora_user_uuid,
+            ConversionEvent.event_type == EVT_ENGAGEMENT_DEEP,
             ConversionEvent.occurred_at >= cutoff,
         )
     )
     rows = (await ctx.session.execute(stmt)).scalars().all()
-    months: set[tuple[int, int]] = set()
+    days: set[tuple[int, int, int]] = set()
     for row in rows:
-        # row may come back as date, datetime, or str depending on dialect
         if isinstance(row, str):
-            parsed = datetime.fromisoformat(row)
-            months.add((parsed.year, parsed.month))
+            parsed = datetime.fromisoformat(row).date()
+            days.add((parsed.year, parsed.month, parsed.day))
+        elif isinstance(row, datetime):
+            days.add((row.year, row.month, row.day))
         else:
-            months.add((row.year, row.month))
-    if len(months) < LOYALIST_ACTIVE_MONTHS_REQUIRED:
+            days.add((row.year, row.month, row.day))
+
+    if not days:
         return None
 
-    summary = await get_mothership_client().get_order_summary(ctx.pandora_user_uuid)
-    if summary.recent_orders < LOYALIST_RECENT_ORDERS_REQUIRED:
-        return None
-
-    return "loyalist"
+    # Walk backwards from today: how many consecutive days ending today
+    # (or the trigger-event's day) are present?
+    today = ctx.event.occurred_at.date()
+    streak = 0
+    cursor = today
+    while (cursor.year, cursor.month, cursor.day) in days:
+        streak += 1
+        cursor = cursor - timedelta(days=1)
+        if streak >= VISITOR_LOYALIST_CONTINUOUS_DAYS:
+            return "loyalist"
+    return None
 
 
 # ── loyalist -> applicant ──────────────────────────────────────────────
 
 
-async def rule_applicant(ctx: TransitionContext) -> str | None:
-    """loyalist -> applicant on franchise.cta_click event."""
-    if ctx.event.event_type != "franchise.cta_click":
-        return None
+async def rule_loyalist_to_applicant(ctx: TransitionContext) -> str | None:
+    """loyalist -> applicant (ADR-008 §2.2 transition #2).
+
+    Triggers (OR):
+      - `franchise.cta_click` (App-side CTA in 朵朵 / 肌膚 / 月曆 / 母艦)
+      - `mothership.consultation_submitted` (婕樂纖後台收到諮詢表單)
+    """
     if ctx.current_status != "loyalist":
         return None
-    return "applicant"
+    if ctx.event.event_type in (
+        EVT_FRANCHISE_CTA_CLICK,
+        EVT_MOTHERSHIP_CONSULTATION_SUBMITTED,
+    ):
+        return "applicant"
+    return None
 
 
-# applicant -> franchisee is currently a manual / admin transition
-# (ADR-003 §7.1 fairysalebox 暫人工處理).
+# ── applicant -> franchisee_self_use ───────────────────────────────────
+
+
+async def rule_applicant_to_franchisee_self_use(
+    ctx: TransitionContext,
+) -> str | None:
+    """applicant -> franchisee_self_use (ADR-008 §2.2 transition #3).
+
+    Trigger: `mothership.first_order` event with payload.amount ≥ NT$6,600.
+    Source: 婕樂纖後台首單成立 webhook → py-service. See ADR-008 §2.3.
+    """
+    if ctx.current_status != "applicant":
+        return None
+    if ctx.event.event_type != EVT_MOTHERSHIP_FIRST_ORDER:
+        return None
+    amount_raw = (ctx.event.payload or {}).get("amount")
+    if amount_raw is None:
+        return None
+    try:
+        amount = Decimal(str(amount_raw))
+    except (ValueError, ArithmeticError):
+        return None
+    if amount < FRANCHISEE_SELF_USE_FIRST_ORDER_THRESHOLD:
+        return None
+    return "franchisee_self_use"
+
+
+# ── franchisee_self_use -> franchisee_active ───────────────────────────
+
+
+async def rule_franchisee_self_use_to_active(
+    ctx: TransitionContext,
+) -> str | None:
+    """franchisee_self_use -> franchisee_active (ADR-008 §2.2 transition #4).
+
+    Two paths (OR):
+      (a) Last FRANCHISEE_ACTIVE_REQUIRED_MONTHS months from MothershipOrderClient
+          all > FRANCHISEE_ACTIVE_MONTHLY_THRESHOLD.
+      (b) `academy.operator_portal_click` event — user actively explored
+          the operator track.
+
+    Path (a) is evaluated on every event while in this state — it's a
+    pull-based check against the mothership. Mothership endpoint may not
+    exist yet (separate母艦 PR); the client falls back to zeros so this
+    branch silently no-ops until母艦 ships it.
+    """
+    if ctx.current_status != "franchisee_self_use":
+        return None
+
+    # Path (b): cheap event-type check first.
+    if ctx.event.event_type == EVT_ACADEMY_OPERATOR_PORTAL_CLICK:
+        return "franchisee_active"
+
+    # Path (a): fetch monthly purchases. Conservative — only run once we
+    # have a state transition into franchisee_self_use; rule guard above
+    # already ensures that.
+    monthly = await get_mothership_client().get_monthly_purchases(
+        ctx.pandora_user_uuid, months=FRANCHISEE_ACTIVE_REQUIRED_MONTHS
+    )
+    if len(monthly) < FRANCHISEE_ACTIVE_REQUIRED_MONTHS:
+        return None
+    if all(m > FRANCHISEE_ACTIVE_MONTHLY_THRESHOLD for m in monthly):
+        return "franchisee_active"
+    return None
+
 
 DEFAULT_RULES: list[TransitionRule] = [
-    rule_first_app_opened,
-    rule_engaged,
-    rule_loyalist,
-    rule_applicant,
+    rule_visitor_to_loyalist,
+    rule_loyalist_to_applicant,
+    rule_applicant_to_franchisee_self_use,
+    rule_franchisee_self_use_to_active,
 ]
 
 
@@ -253,7 +303,11 @@ async def force_transition(
     to_status: str,
     metadata: dict[str, Any] | None = None,
 ) -> LifecycleTransition:
-    """Admin / internal-triggered transition (e.g. fairysalebox onboard, manual qualify)."""
+    """Admin / internal-triggered transition.
+
+    Used by `qualify-franchisee-self-use` admin endpoint as a fallback /
+    reconcile path when母艦 webhook is missed. Validates against STATES.
+    """
     if to_status not in STATES:
         raise ValueError(f"invalid lifecycle status: {to_status}")
     current = await get_current_status(session, pandora_user_uuid)
