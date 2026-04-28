@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gamification import catalog
+from app.gamification import catalog, outbox
 from app.gamification.models import (
     UserProgression,
     XpLedgerEntry,
@@ -225,6 +225,27 @@ async def ingest_event_internal(
     leveled_up_to = await _apply_xp_to_progression(
         session, progression, xp_delta, occurred_at=payload.occurred_at
     )
+    if leveled_up_to is not None:
+        # ADR-009 §2.2 — fan-out level-up via outbox so each App can mirror
+        # group_level locally + drive its own celebration UX. We deliberately
+        # don't fan-out every XP tick (would be N events per meal/card/etc);
+        # level transitions are the user-perceptible milestone.
+        await outbox.enqueue_event(
+            session,
+            event_type="gamification.level_up",
+            pandora_user_uuid=payload.pandora_user_uuid,
+            payload={
+                "new_level": leveled_up_to,
+                "total_xp": progression.total_xp,
+                "level_name_zh": progression.level_name_zh,
+                "level_name_en": progression.level_name_en,
+                "trigger_source_app": payload.source_app,
+                "trigger_event_kind": payload.event_kind,
+                "trigger_ledger_id": entry.id,
+                "occurred_at": payload.occurred_at.isoformat(),
+            },
+            ledger_id=entry.id,
+        )
     return IngestOutcome(
         entry=entry,
         progression=progression,
