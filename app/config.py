@@ -34,9 +34,22 @@ class Settings(BaseSettings):
 
     internal_shared_secret: str = "change-me"
 
+    # Mothership (pandora-js-store) — ADR-003 loyalist rule needs 母艦
+    # order summary. When base_url+secret are unset we fall back to the
+    # stub client (loyalist's repeat-purchase branch silently no-ops, by
+    # design — see ADR-003 §6 「保守誤殺」).
+    mothership_base_url: str = ""
+    mothership_internal_secret: str = ""
+    mothership_timeout: float = 5.0
+
     @property
     def allowed_products(self) -> set[str]:
         return {p.strip() for p in self.pandora_core_allowed_products.split(",") if p.strip()}
+
+    @property
+    def mothership_http_enabled(self) -> bool:
+        """True iff both base_url and secret are configured."""
+        return bool(self.mothership_base_url) and bool(self.mothership_internal_secret)
 
 
 @lru_cache(maxsize=1)
