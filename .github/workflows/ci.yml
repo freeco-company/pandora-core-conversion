@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pandora
+          POSTGRES_PASSWORD: pandora
+          POSTGRES_DB: pandora_conversion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Mypy
+        run: mypy app
+
+      - name: Alembic upgrade head (PG)
+        env:
+          DATABASE_URL: postgresql+asyncpg://pandora:pandora@localhost:5432/pandora_conversion
+        run: alembic upgrade head
+
+      - name: Pytest
+        env:
+          DATABASE_URL: postgresql+asyncpg://pandora:pandora@localhost:5432/pandora_conversion
+          PANDORA_CORE_BASE_URL: http://localhost:8001
+          PANDORA_CORE_ISSUER: https://id.js-store.com.tw
+          PANDORA_CORE_ALLOWED_PRODUCTS: pandora_js_store,doudou,fairy_calendar,fairy_skin,fairy_academy
+          INTERNAL_SHARED_SECRET: ci-secret
+        run: pytest -v --tb=short

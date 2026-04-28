@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pandora
+      POSTGRES_PASSWORD: pandora
+      POSTGRES_DB: pandora_conversion
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pandora -d pandora_conversion"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://pandora:pandora@postgres:5432/pandora_conversion
+      PANDORA_CORE_BASE_URL: ${PANDORA_CORE_BASE_URL:-http://host.docker.internal:8001}
+      PANDORA_CORE_ISSUER: ${PANDORA_CORE_ISSUER:-https://id.js-store.com.tw}
+      PANDORA_CORE_ALLOWED_PRODUCTS: ${PANDORA_CORE_ALLOWED_PRODUCTS:-pandora_js_store,doudou,fairy_calendar,fairy_skin,fairy_academy}
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-change-me}
+    ports:
+      - "8002:8002"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
+
+volumes:
+  pg_data:
