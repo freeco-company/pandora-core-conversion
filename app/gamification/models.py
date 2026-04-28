@@ -161,6 +161,27 @@ class OutfitCatalog(Base):
     )
 
 
+class UserOutfit(Base):
+    """A user's owned outfits. Composite PK enforces idempotent grant."""
+
+    __tablename__ = "gamification_user_outfits"
+
+    pandora_user_uuid: Mapped[uuid.UUID] = mapped_column(
+        _uuid_col(), primary_key=True, nullable=False
+    )
+    code: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("gamification_outfit_catalog.code", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    awarded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # awarded_via: "level_up" / "manual" / future tiers (streak / fp / cross_app)
+    awarded_via: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
 class GamificationOutboxEvent(Base):
     """Webhook fan-out outbox. ADR-009 §2.2 / ADR-007 outbox pattern.
 

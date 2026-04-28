@@ -332,3 +332,29 @@ def get_outfit_def(code: str) -> OutfitDef:
     if out is None:
         raise KeyError(f"unknown outfit code: {code}")
     return out
+
+
+def parse_level_unlock(unlock_condition: str) -> int | None:
+    """If `unlock_condition` is a level gate (e.g. "LV.5"), return the level int.
+
+    Returns None for non-level conditions (streak / fp / cross_app), which
+    are unlocked via separate per-tier flows.
+    """
+    if not unlock_condition.startswith("LV."):
+        return None
+    try:
+        return int(unlock_condition[3:].strip())
+    except ValueError:
+        return None
+
+
+def level_unlock_outfits_up_to(level: int) -> list[OutfitDef]:
+    """All level-tier outfits whose unlock level is <= `level`."""
+    out: list[OutfitDef] = []
+    for d in OUTFIT_CATALOG.values():
+        if d.tier != "level":
+            continue
+        gate = parse_level_unlock(d.unlock_condition)
+        if gate is not None and gate <= level:
+            out.append(d)
+    return out
