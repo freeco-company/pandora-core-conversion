@@ -11,9 +11,12 @@ from app.auth.internal import require_internal_secret
 from app.db import get_session
 from app.gamification import catalog, outbox, service
 from app.gamification.schemas import (
+    AwardAchievementRequest,
+    AwardAchievementResponse,
     EventIngestResponse,
     InternalEventIngestRequest,
     ProgressionResponse,
+    SeedAchievementsResponse,
 )
 
 router = APIRouter()
@@ -89,6 +92,59 @@ async def get_progression(
             xp_to_next_level=catalog.xp_for_level(2),
         )
     return _progression_to_response(progression)
+
+
+@router.post(
+    "/internal/gamification/achievements/award",
+    response_model=AwardAchievementResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def award_achievement(
+    payload: AwardAchievementRequest,
+    session: AsyncSession = Depends(get_session),
+) -> AwardAchievementResponse:
+    """Grant an achievement (idempotent on (uuid, code)).
+
+    The achievement must already exist in the catalog table — call
+    `POST /internal/gamification/achievements/seed` first (or via deploy
+    script) to populate from `catalog.ACHIEVEMENT_CATALOG`.
+    """
+    try:
+        async with session.begin():
+            outcome = await service.award_achievement(session, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return AwardAchievementResponse(
+        awarded=outcome.awarded,
+        code=outcome.achievement.code,
+        tier=outcome.achievement.tier,
+        xp_delta=outcome.xp_delta,
+        total_xp=outcome.progression.total_xp,
+        group_level=outcome.progression.group_level,
+        leveled_up_to=outcome.leveled_up_to,
+    )
+
+
+@router.post(
+    "/internal/gamification/achievements/seed",
+    response_model=SeedAchievementsResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def seed_achievements(
+    session: AsyncSession = Depends(get_session),
+) -> SeedAchievementsResponse:
+    """Upsert the built-in achievement catalog into the DB. Idempotent — safe
+    to run on every deploy.
+    """
+    async with session.begin():
+        inserted, updated = await service.seed_achievement_catalog(session)
+    return SeedAchievementsResponse(
+        inserted=inserted,
+        updated=updated,
+        total=len(catalog.ACHIEVEMENT_CATALOG),
+    )
 
 
 @router.post(
