@@ -35,7 +35,7 @@ def _jsonb() -> JSON:
 
 def _uuid_col() -> UUID:
     """UUID on PostgreSQL, fallback to String(36) on sqlite."""
-    return UUID(as_uuid=True).with_variant(String(36), "sqlite")  # type: ignore[return-value]
+    return UUID(as_uuid=True).with_variant(String(36), "sqlite")
 
 
 class ConversionEvent(Base):

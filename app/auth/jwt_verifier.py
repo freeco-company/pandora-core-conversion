@@ -48,7 +48,7 @@ class JwtVerifier:
             resp.raise_for_status()
             data = resp.json()
         pem = data.get("public_key")
-        if not pem:
+        if not isinstance(pem, str) or not pem:
             raise JwtVerificationError("public_key missing in platform response")
         self._public_key_pem = pem
         self._fetched_at = time.time()
