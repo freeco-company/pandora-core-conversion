@@ -42,6 +42,22 @@ class Settings(BaseSettings):
     mothership_internal_secret: str = ""
     mothership_timeout: float = 5.0
 
+    # Gamification webhook fan-out (ADR-009 §2.2)
+    # Comma-separated list of consumer names. For each, expect:
+    #   GAMIFICATION_CONSUMER_<NAME>_URL
+    #   GAMIFICATION_CONSUMER_<NAME>_SECRET
+    # Empty = no fan-out (events still write to outbox; dispatcher idle).
+    gamification_consumers: str = ""
+    gamification_dispatch_timeout: float = 5.0
+    # Replay-protection window for receivers (informational; we set the
+    # X-Pandora-Timestamp header at send time and consumers should reject
+    # events older than this window).
+    gamification_max_clock_skew_seconds: int = 300
+
+    @property
+    def gamification_consumer_names(self) -> list[str]:
+        return [c.strip() for c in self.gamification_consumers.split(",") if c.strip()]
+
     @property
     def allowed_products(self) -> set[str]:
         return {p.strip() for p in self.pandora_core_allowed_products.split(",") if p.strip()}

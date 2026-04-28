@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.internal import require_internal_secret
 from app.db import get_session
-from app.gamification import catalog, service
+from app.gamification import catalog, outbox, service
 from app.gamification.schemas import (
     EventIngestResponse,
     InternalEventIngestRequest,
@@ -89,3 +89,24 @@ async def get_progression(
             xp_to_next_level=catalog.xp_for_level(2),
         )
     return _progression_to_response(progression)
+
+
+@router.post(
+    "/internal/gamification/outbox/dispatch",
+    dependencies=[Depends(require_internal_secret)],
+)
+async def dispatch_outbox(
+    limit: int = 100,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Manual / cron-driven dispatch of pending outbox rows.
+
+    Runs synchronously over the request — fine for cron + small batches. A
+    proper background worker (Phase A.2.1) can replace this with periodic
+    `dispatch_pending` calls.
+    """
+    if limit < 1 or limit > 1000:
+        raise HTTPException(status_code=422, detail="limit must be in 1..1000")
+    async with session.begin():
+        summary = await outbox.dispatch_pending(session, limit=limit)
+    return summary
