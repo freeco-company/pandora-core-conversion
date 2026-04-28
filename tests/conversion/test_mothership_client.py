@@ -1,12 +1,6 @@
 """Tests for HttpMothershipOrderClient + settings-driven default selection.
 
-ADR-003 §3.2. Coverage:
-
-  - happy path: signed GET → parsed summary
-  - mothership 5xx → falls back to zero (no exception bubbles)
-  - timeout → falls back to zero
-  - settings without env → default client is stub
-  - settings with env → default client is HTTP
+ADR-003 §3.2 (signing) + ADR-008 §2.2 (monthly purchases).
 """
 
 from __future__ import annotations
@@ -14,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 from collections.abc import Iterator
+from decimal import Decimal
 from uuid import uuid4
 
 import httpx
@@ -182,5 +177,112 @@ async def test_404_uuid_not_mapped_returns_zero() -> None:
 
     assert summary.recent_orders == 0
     assert summary.lifetime_orders == 0
+
+
+# ── get_monthly_purchases (ADR-008 §2.2) ───────────────────────────────
+
+
+async def test_monthly_purchases_happy_path() -> None:
+    """Happy path: parse amounts, verify signature, path excludes query."""
+    uuid = uuid4()
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "months": [
+                    {"year_month": "2026-04", "amount": "32500.00"},
+                    {"year_month": "2026-03", "amount": "31000.00"},
+                    {"year_month": "2026-02", "amount": "30100.50"},
+                ]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as injected:
+        client = HttpMothershipOrderClient(
+            base_url=BASE_URL, secret=SECRET, client=injected
+        )
+        result = await client.get_monthly_purchases(uuid, months=3)
+
+    assert result == [Decimal("32500.00"), Decimal("31000.00"), Decimal("30100.50")]
+
+    req = captured[0]
+    assert "?months=3" in str(req.url)
+    expected_path = (
+        f"/api/internal/conversion/customer-monthly-purchases/{uuid}"
+    )
+    assert req.url.path == expected_path
+
+    # Signature base must NOT include the query string.
+    ts = req.headers["X-Pandora-Timestamp"]
+    sig = req.headers["X-Pandora-Signature"]
+    base = f"{ts}.GET.{expected_path}"
+    expected = hmac.new(
+        SECRET.encode(), base.encode(), hashlib.sha256
+    ).hexdigest()
+    assert sig == expected
+
+
+async def test_monthly_purchases_404_falls_back_to_zeros() -> None:
+    """母艦 endpoint not yet shipped → 404 → zeros (rule no-ops)."""
+    uuid = uuid4()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "not found"})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as injected:
+        client = HttpMothershipOrderClient(
+            base_url=BASE_URL, secret=SECRET, client=injected
+        )
+        result = await client.get_monthly_purchases(uuid, months=3)
+
+    assert result == [Decimal("0"), Decimal("0"), Decimal("0")]
+
+
+async def test_monthly_purchases_timeout_falls_back_to_zeros() -> None:
+    uuid = uuid4()
+    call_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        raise httpx.ConnectTimeout("simulated timeout")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as injected:
+        client = HttpMothershipOrderClient(
+            base_url=BASE_URL, secret=SECRET, client=injected
+        )
+        result = await client.get_monthly_purchases(uuid, months=4)
+
+    # Retried once → 2 calls; padded to requested length.
+    assert call_count["n"] == 2
+    assert result == [Decimal("0")] * 4
+
+
+async def test_monthly_purchases_5xx_falls_back_to_zeros() -> None:
+    uuid = uuid4()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": "down"})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as injected:
+        client = HttpMothershipOrderClient(
+            base_url=BASE_URL, secret=SECRET, client=injected
+        )
+        result = await client.get_monthly_purchases(uuid, months=3)
+
+    assert result == [Decimal("0")] * 3
+
+
+async def test_stub_monthly_purchases_returns_zeros() -> None:
+    """StubMothershipOrderClient returns zeros sized to requested months."""
+    stub = StubMothershipOrderClient()
+    out = await stub.get_monthly_purchases(uuid4(), months=5)
+    assert out == [Decimal("0")] * 5
 
 

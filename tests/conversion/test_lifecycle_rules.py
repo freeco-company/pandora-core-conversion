@@ -1,13 +1,13 @@
-"""Unit tests for individual lifecycle transition rules.
+"""Unit tests for ADR-008 lifecycle transition rules.
 
-Each rule has at least one fire + one no-fire case. We exercise the rules at
-the service layer (not HTTP) so we can pre-seed the DB cleanly and avoid
-needing N JWT round-trips.
+Each rule has at least 2 cases (≥1 fire + ≥1 no-fire). Service-layer tests
+(not HTTP) so we can pre-seed DB cleanly without JWT round-trips.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -30,7 +30,8 @@ async def _seed_event(
     session,
     uuid: UUID,
     *,
-    event_type: str = "app.opened",
+    event_type: str = "engagement.deep",
+    payload: dict | None = None,
     occurred_at: datetime | None = None,
     app_id: str = "doudou",
 ) -> ConversionEvent:
@@ -39,7 +40,7 @@ async def _seed_event(
         customer_id=None,
         app_id=app_id,
         event_type=event_type,
-        payload={},
+        payload=payload or {},
         occurred_at=occurred_at or datetime.now(tz=UTC),
     )
     session.add(e)
@@ -68,119 +69,108 @@ async def _seed_transition(
     await session.flush()
 
 
-# ── rule_engaged ───────────────────────────────────────────────────────
+class _FakeMothership:
+    """Configurable fake for both order summary and monthly purchases."""
+
+    def __init__(
+        self,
+        *,
+        recent_orders: int = 0,
+        monthly: list[Decimal] | None = None,
+    ) -> None:
+        self._recent = recent_orders
+        self._monthly = monthly if monthly is not None else [Decimal("0")] * 3
+
+    async def get_order_summary(
+        self, uuid: UUID
+    ) -> mothership.MothershipOrderSummary:
+        return mothership.MothershipOrderSummary(
+            pandora_user_uuid=uuid,
+            recent_orders=self._recent,
+            lifetime_orders=self._recent,
+        )
+
+    async def get_monthly_purchases(
+        self, uuid: UUID, months: int = 3
+    ) -> list[Decimal]:
+        out = list(self._monthly)
+        if len(out) < months:
+            out += [Decimal("0")] * (months - len(out))
+        return out[:months]
 
 
-async def test_engaged_fires_on_subscription_event(session_factory) -> None:
+# ── rule_visitor_to_loyalist ───────────────────────────────────────────
+
+
+async def test_loyalist_fires_on_premium_subscription(session_factory) -> None:
     uuid = uuid4()
     async with session_factory() as session:
-        await _seed_transition(session, uuid, to_status="registered")
+        # No prior transitions — current_status is None, treated as visitor.
         event = await _seed_event(
-            session, uuid, event_type="subscription.activated"
+            session, uuid, event_type="subscription.premium_active"
         )
         result = await lifecycle.evaluate_event(session, uuid, event)
         assert result.fired
-        assert result.from_status == "registered"
-        assert result.to_status == "engaged"
+        assert result.to_status == "loyalist"
 
 
-async def test_engaged_does_not_fire_when_not_registered(session_factory) -> None:
+async def test_loyalist_fires_on_14_continuous_engagement_days(
+    session_factory,
+) -> None:
     uuid = uuid4()
     async with session_factory() as session:
-        await _seed_transition(session, uuid, to_status="engaged")
-        event = await _seed_event(
-            session, uuid, event_type="subscription.activated"
-        )
-        result = await lifecycle.evaluate_event(session, uuid, event)
-        # Already engaged; rule must not re-fire to engaged.
-        assert not result.fired
-
-
-async def test_engaged_fires_after_60_distinct_days(session_factory) -> None:
-    uuid = uuid4()
-    async with session_factory() as session:
-        await _seed_transition(session, uuid, to_status="registered")
-        # Seed 60 days of events
-        base = datetime.now(tz=UTC) - timedelta(days=70)
-        for i in range(60):
-            await _seed_event(
-                session,
-                uuid,
-                event_type="app.opened",
-                occurred_at=base + timedelta(days=i),
-            )
-        # Trigger event (61st distinct day pushes count to 61)
-        trigger = await _seed_event(
-            session, uuid, event_type="app.opened", occurred_at=datetime.now(tz=UTC)
-        )
-        result = await lifecycle.evaluate_event(session, uuid, trigger)
-        assert result.fired
-        assert result.to_status == "engaged"
-
-
-# ── rule_loyalist ──────────────────────────────────────────────────────
-
-
-async def test_loyalist_does_not_fire_with_stub_mothership(session_factory) -> None:
-    """Stub mothership returns 0 orders → loyalist branch can't satisfy
-    repeat-purchase requirement → rule never fires (conservative v1)."""
-    uuid = uuid4()
-    async with session_factory() as session:
-        await _seed_transition(session, uuid, to_status="engaged")
-        # Spread events across 3 calendar months
-        now = datetime.now(tz=UTC)
-        for delta_days in (0, 35, 70):
+        await _seed_transition(session, uuid, to_status="visitor")
+        # Seed 13 days of engagement.deep ending yesterday; trigger today
+        # gives 14 consecutive days.
+        today = datetime.now(tz=UTC)
+        for i in range(1, 14):  # 1..13 days ago
             await _seed_event(
                 session,
                 uuid,
                 event_type="engagement.deep",
-                occurred_at=now - timedelta(days=delta_days),
+                occurred_at=today - timedelta(days=i),
             )
         trigger = await _seed_event(
-            session, uuid, event_type="engagement.deep", occurred_at=now
+            session, uuid, event_type="engagement.deep", occurred_at=today
+        )
+        result = await lifecycle.evaluate_event(session, uuid, trigger)
+        assert result.fired
+        assert result.to_status == "loyalist"
+
+
+async def test_loyalist_does_not_fire_with_gap_in_streak(session_factory) -> None:
+    uuid = uuid4()
+    async with session_factory() as session:
+        await _seed_transition(session, uuid, to_status="visitor")
+        today = datetime.now(tz=UTC)
+        # Days 1..6 + 8..14 ago — there's a gap at day 7 → no 14-day streak.
+        for i in [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14]:
+            await _seed_event(
+                session,
+                uuid,
+                event_type="engagement.deep",
+                occurred_at=today - timedelta(days=i),
+            )
+        trigger = await _seed_event(
+            session, uuid, event_type="engagement.deep", occurred_at=today
         )
         result = await lifecycle.evaluate_event(session, uuid, trigger)
         assert not result.fired
 
 
-async def test_loyalist_fires_with_fake_mothership_and_3_months(
-    session_factory,
-) -> None:
-    """Inject a fake MothershipOrderClient that reports ≥2 recent orders."""
-
-    class FakeClient:
-        async def get_order_summary(self, _uuid: UUID):
-            return mothership.MothershipOrderSummary(
-                pandora_user_uuid=_uuid,
-                recent_orders=3,
-                lifetime_orders=5,
-            )
-
-    mothership.set_mothership_client_for_testing(FakeClient())
-    try:
-        uuid = uuid4()
-        async with session_factory() as session:
-            await _seed_transition(session, uuid, to_status="engaged")
-            now = datetime.now(tz=UTC)
-            # Three distinct calendar months in the lookback window
-            for delta_days in (0, 35, 70):
-                await _seed_event(
-                    session,
-                    uuid,
-                    event_type="engagement.deep",
-                    occurred_at=now - timedelta(days=delta_days),
-                )
-            trigger = await _seed_event(
-                session, uuid, event_type="engagement.deep", occurred_at=now
-            )
-            result = await lifecycle.evaluate_event(session, uuid, trigger)
-            assert result.fired
-            assert result.to_status == "loyalist"
-    finally:
-        mothership.reset_mothership_client()
+async def test_loyalist_does_not_fire_when_already_past(session_factory) -> None:
+    uuid = uuid4()
+    async with session_factory() as session:
+        await _seed_transition(session, uuid, to_status="applicant")
+        event = await _seed_event(
+            session, uuid, event_type="subscription.premium_active"
+        )
+        result = await lifecycle.evaluate_event(session, uuid, event)
+        # Already past loyalist; rule must not regress.
+        assert not result.fired
 
 
-# ── rule_applicant ─────────────────────────────────────────────────────
+# ── rule_loyalist_to_applicant ─────────────────────────────────────────
 
 
 async def test_applicant_fires_on_cta_click_when_loyalist(session_factory) -> None:
@@ -195,46 +185,194 @@ async def test_applicant_fires_on_cta_click_when_loyalist(session_factory) -> No
         assert result.to_status == "applicant"
 
 
-async def test_applicant_does_not_fire_when_not_loyalist(session_factory) -> None:
+async def test_applicant_fires_on_consultation_form(session_factory) -> None:
     uuid = uuid4()
     async with session_factory() as session:
-        await _seed_transition(session, uuid, to_status="engaged")
+        await _seed_transition(session, uuid, to_status="loyalist")
+        event = await _seed_event(
+            session,
+            uuid,
+            event_type="mothership.consultation_submitted",
+            payload={"form_id": "fp_2026q2_a", "source": "fp_homepage"},
+        )
+        result = await lifecycle.evaluate_event(session, uuid, event)
+        assert result.fired
+        assert result.to_status == "applicant"
+
+
+async def test_applicant_does_not_fire_when_visitor(session_factory) -> None:
+    uuid = uuid4()
+    async with session_factory() as session:
+        await _seed_transition(session, uuid, to_status="visitor")
         event = await _seed_event(
             session, uuid, event_type="franchise.cta_click"
         )
         result = await lifecycle.evaluate_event(session, uuid, event)
-        # cta_click on engaged user must not skip levels
+        # cta_click on visitor must not skip levels (no auto-promote).
         assert not result.fired
 
 
-# ── rule_first_app_opened (existing behaviour, sanity) ────────────────
+# ── rule_applicant_to_franchisee_self_use ──────────────────────────────
 
 
-async def test_first_event_visitor_to_registered(session_factory) -> None:
-    uuid = uuid4()
-    async with session_factory() as session:
-        event = await _seed_event(session, uuid, event_type="app.opened")
-        result = await lifecycle.evaluate_event(session, uuid, event)
-        assert result.fired
-        assert result.to_status == "registered"
-
-
-# ── No transition above applicant (franchisee is admin-only) ──────────
-
-
-async def test_franchisee_not_auto_fired(session_factory) -> None:
+async def test_self_use_fires_on_first_order_at_threshold(session_factory) -> None:
     uuid = uuid4()
     async with session_factory() as session:
         await _seed_transition(session, uuid, to_status="applicant")
-        # Even an admin-ish event won't auto-promote to franchisee
-        event = await _seed_event(session, uuid, event_type="franchise.cta_click")
+        event = await _seed_event(
+            session,
+            uuid,
+            event_type="mothership.first_order",
+            payload={
+                "order_id": "MO-12345",
+                "amount": "6600",
+                "sku_codes": ["FP-A-001"],
+            },
+        )
+        result = await lifecycle.evaluate_event(session, uuid, event)
+        assert result.fired
+        assert result.to_status == "franchisee_self_use"
+
+
+async def test_self_use_does_not_fire_below_threshold(session_factory) -> None:
+    uuid = uuid4()
+    async with session_factory() as session:
+        await _seed_transition(session, uuid, to_status="applicant")
+        event = await _seed_event(
+            session,
+            uuid,
+            event_type="mothership.first_order",
+            payload={"order_id": "MO-1", "amount": "5000", "sku_codes": []},
+        )
         result = await lifecycle.evaluate_event(session, uuid, event)
         assert not result.fired
 
 
-@pytest.mark.parametrize("invalid", ["unknown_state", "FRANCHISEE", ""])
+async def test_self_use_does_not_fire_when_not_applicant(session_factory) -> None:
+    uuid = uuid4()
+    async with session_factory() as session:
+        await _seed_transition(session, uuid, to_status="loyalist")
+        event = await _seed_event(
+            session,
+            uuid,
+            event_type="mothership.first_order",
+            payload={"order_id": "MO-1", "amount": "10000", "sku_codes": []},
+        )
+        result = await lifecycle.evaluate_event(session, uuid, event)
+        # User must pass through applicant first.
+        assert not result.fired
+
+
+# ── rule_franchisee_self_use_to_active ─────────────────────────────────
+
+
+async def test_active_fires_on_operator_portal_click(session_factory) -> None:
+    uuid = uuid4()
+    async with session_factory() as session:
+        await _seed_transition(session, uuid, to_status="franchisee_self_use")
+        event = await _seed_event(
+            session,
+            uuid,
+            event_type="academy.operator_portal_click",
+            payload={"source_page": "academy_home"},
+        )
+        result = await lifecycle.evaluate_event(session, uuid, event)
+        assert result.fired
+        assert result.to_status == "franchisee_active"
+
+
+async def test_active_fires_on_3_months_above_30k(session_factory) -> None:
+    """Mock母艦 client returns three months > NT$30K → path (a) fires."""
+    mothership.set_mothership_client_for_testing(
+        _FakeMothership(
+            monthly=[Decimal("32000"), Decimal("35000"), Decimal("40000")]
+        )
+    )
+    try:
+        uuid = uuid4()
+        async with session_factory() as session:
+            await _seed_transition(
+                session, uuid, to_status="franchisee_self_use"
+            )
+            # Any non-portal-click event triggers re-evaluation; engagement
+            # events keep arriving naturally.
+            event = await _seed_event(
+                session, uuid, event_type="engagement.deep"
+            )
+            result = await lifecycle.evaluate_event(session, uuid, event)
+            assert result.fired
+            assert result.to_status == "franchisee_active"
+    finally:
+        mothership.reset_mothership_client()
+
+
+async def test_active_does_not_fire_when_below_threshold(session_factory) -> None:
+    mothership.set_mothership_client_for_testing(
+        _FakeMothership(
+            monthly=[Decimal("32000"), Decimal("10000"), Decimal("40000")]
+        )
+    )
+    try:
+        uuid = uuid4()
+        async with session_factory() as session:
+            await _seed_transition(
+                session, uuid, to_status="franchisee_self_use"
+            )
+            event = await _seed_event(
+                session, uuid, event_type="engagement.deep"
+            )
+            result = await lifecycle.evaluate_event(session, uuid, event)
+            assert not result.fired
+    finally:
+        mothership.reset_mothership_client()
+
+
+async def test_active_does_not_fire_when_not_self_use(session_factory) -> None:
+    uuid = uuid4()
+    async with session_factory() as session:
+        await _seed_transition(session, uuid, to_status="loyalist")
+        event = await _seed_event(
+            session, uuid, event_type="academy.operator_portal_click"
+        )
+        result = await lifecycle.evaluate_event(session, uuid, event)
+        # Must reach franchisee_self_use first.
+        assert not result.fired
+
+
+# ── force_transition validation ────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "unknown_state",
+        "FRANCHISEE_SELF_USE",
+        "",
+        # Old ADR-003 stages — must be rejected post-ADR-008.
+        "registered",
+        "engaged",
+        "franchisee",
+    ],
+)
 async def test_force_transition_rejects_invalid(session_factory, invalid) -> None:
     uuid = uuid4()
     async with session_factory() as session:
         with pytest.raises(ValueError):
             await lifecycle.force_transition(session, uuid, invalid)
+
+
+@pytest.mark.parametrize(
+    "valid",
+    [
+        "visitor",
+        "loyalist",
+        "applicant",
+        "franchisee_self_use",
+        "franchisee_active",
+    ],
+)
+async def test_force_transition_accepts_all_5_stages(session_factory, valid) -> None:
+    uuid = uuid4()
+    async with session_factory() as session:
+        t = await lifecycle.force_transition(session, uuid, valid)
+        assert t.to_status == valid

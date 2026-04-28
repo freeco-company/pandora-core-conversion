@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Pandora Core Conversion Service",
     version="0.1.0",
-    description="Loyalist-to-franchisee conversion funnel. ADR-003.",
+    description="Conversion funnel — 5-stage lifecycle (ADR-008 supersedes ADR-003).",
     lifespan=lifespan,
 )
 

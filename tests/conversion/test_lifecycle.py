@@ -1,4 +1,7 @@
-"""Lifecycle endpoints + state machine tests."""
+"""Lifecycle endpoints + state machine tests (HTTP layer).
+
+ADR-008 — 5 stages; training endpoints removed.
+"""
 
 from __future__ import annotations
 
@@ -19,18 +22,18 @@ async def test_lifecycle_history_starts_visitor(client, make_jwt) -> None:
     assert body["history"] == []
 
 
-async def test_lifecycle_path_after_first_event(client, make_jwt) -> None:
+async def test_lifecycle_path_after_premium(client, make_jwt) -> None:
+    """ADR-008 §2.2 #1 — premium subscription event → loyalist."""
     user_uuid = str(uuid4())
     token = make_jwt(sub=user_uuid, scopes=["events:write"])
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Fire first app.opened -> registered
     await client.post(
         "/api/v1/events",
         headers=headers,
         json={
             "app_id": "doudou",
-            "event_type": "app.opened",
+            "event_type": "subscription.premium_active",
             "payload": {},
             "occurred_at": datetime.now(tz=UTC).isoformat(),
         },
@@ -38,10 +41,10 @@ async def test_lifecycle_path_after_first_event(client, make_jwt) -> None:
 
     resp = await client.get(f"/api/v1/users/{user_uuid}/lifecycle", headers=headers)
     body = resp.json()
-    assert body["current_status"] == "registered"
+    assert body["current_status"] == "loyalist"
     assert len(body["history"]) == 1
     assert body["history"][0]["from_status"] is None
-    assert body["history"][0]["to_status"] == "registered"
+    assert body["history"][0]["to_status"] == "loyalist"
 
 
 async def test_lifecycle_cross_user_forbidden(client, make_jwt) -> None:
@@ -86,36 +89,14 @@ async def test_force_transition_invalid_status(client, make_jwt) -> None:
     assert resp.status_code == 422
 
 
-async def test_training_progress_upsert(client, make_jwt) -> None:
+async def test_force_transition_rejects_old_adr003_stages(client, make_jwt) -> None:
+    """ADR-008: stages registered/engaged/franchisee are gone."""
     user_uuid = str(uuid4())
-    token = make_jwt(sub=user_uuid)
-    headers = {"Authorization": f"Bearer {token}"}
-
-    resp = await client.post(
-        f"/api/v1/users/{user_uuid}/training",
-        headers=headers,
-        json={"chapter_id": "intro", "completed": True, "quiz_score": 88},
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["chapter_id"] == "intro"
-    assert body["quiz_score"] == 88
-    assert body["completed_at"] is not None
-    assert body["attempts"] == 1
-
-    # Second submission -> attempts increments, completed_at unchanged
-    resp2 = await client.post(
-        f"/api/v1/users/{user_uuid}/training",
-        headers=headers,
-        json={"chapter_id": "intro", "completed": True, "quiz_score": 95},
-    )
-    assert resp2.status_code == 200
-    body2 = resp2.json()
-    assert body2["attempts"] == 2
-    assert body2["quiz_score"] == 95
-
-    # Read back
-    resp3 = await client.get(f"/api/v1/users/{user_uuid}/training", headers=headers)
-    chapters = resp3.json()["chapters"]
-    assert len(chapters) == 1
-    assert chapters[0]["chapter_id"] == "intro"
+    token = make_jwt(sub=user_uuid, scopes=["lifecycle:write"])
+    for old in ("registered", "engaged", "franchisee"):
+        resp = await client.post(
+            f"/api/v1/users/{user_uuid}/lifecycle/transition",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"to_status": old},
+        )
+        assert resp.status_code == 422, f"{old} should be rejected"
