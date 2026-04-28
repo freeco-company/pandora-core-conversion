@@ -276,3 +276,59 @@ def xp_reward_for_tier(tier: str) -> int:
     if tier not in TIER_XP_REWARD:
         raise ValueError(f"invalid tier: {tier} (expected one of {list(TIER_XP_REWARD)})")
     return TIER_XP_REWARD[tier]
+
+
+# ── Outfit catalog (catalog §6) ───────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class OutfitDef:
+    """Built-in outfit definition. Seeded into gamification_outfit_catalog.
+
+    `unlock_condition` is a free-form string for now — apps interpret it for
+    UX hint copy ("LV.5", "streak 7 days", "fp_lifetime tier"). Actual unlock
+    grant flow is per-condition (see ADR-009 §6.3 future iteration).
+    """
+
+    code: str
+    name: str
+    unlock_condition: str
+    tier: str  # "default" / "level" / "streak" / "fp" / "cross_app"
+    species_compat: tuple[str, ...]  # () = all species
+
+
+# Source: group-gamification-catalog.md §6.1 + §6.2
+OUTFIT_CATALOG: dict[str, OutfitDef] = {
+    # 6.1 既有（朵朵搬過來）
+    "none": OutfitDef("none", "基本", "default", "default", ()),
+    "scarf": OutfitDef("scarf", "溫暖圍巾", "LV.5", "level", ()),
+    "glasses": OutfitDef("glasses", "圓框眼鏡", "LV.8", "level", ()),
+    "headphones": OutfitDef("headphones", "玫瑰耳機", "LV.12", "level", ()),
+    "straw_hat": OutfitDef("straw_hat", "草帽", "streak 7 days", "streak", ()),
+    "angel_wings": OutfitDef("angel_wings", "天使翅膀", "LV.20", "level", ()),
+    "fp_crown": OutfitDef("fp_crown", "FP 皇冠", "fp_lifetime tier", "fp", ()),
+    "fp_chef": OutfitDef("fp_chef", "FP 主廚裝", "fp_lifetime tier", "fp", ()),
+    # 6.2 規劃跨 App 解鎖
+    "jerosse_vip_dress": OutfitDef(
+        "jerosse_vip_dress", "VIP 禮服", "jerosse spend ≥ 10k", "cross_app", ()
+    ),
+    "calendar_moon": OutfitDef(
+        "calendar_moon", "月相披風", "calendar full_cycle x3", "cross_app", ()
+    ),
+    "skin_glow": OutfitDef(
+        "skin_glow", "透亮光環", "skin 30_day_tracked", "cross_app", ()
+    ),
+    "academy_grad": OutfitDef(
+        "academy_grad", "學士袍", "academy course_completed", "cross_app", ()
+    ),
+    "group_eternal": OutfitDef(
+        "group_eternal", "永恆冠冕", "LV.100", "level", ()
+    ),
+}
+
+
+def get_outfit_def(code: str) -> OutfitDef:
+    out = OUTFIT_CATALOG.get(code)
+    if out is None:
+        raise KeyError(f"unknown outfit code: {code}")
+    return out

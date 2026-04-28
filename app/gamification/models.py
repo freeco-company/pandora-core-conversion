@@ -138,6 +138,29 @@ class UserAchievement(Base):
     source_app: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
+class OutfitCatalog(Base):
+    """Cross-app outfit definitions, source-controlled and seed-able.
+
+    Apps fetch this via GET /internal/gamification/outfits to render UX hints
+    ("unlock at LV.5"). A separate user_outfits table (future) records which
+    user owns which outfit; for v1 we ship the catalog read-only.
+    """
+
+    __tablename__ = "gamification_outfit_catalog"
+
+    code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    unlock_condition: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    # tier: default / level / streak / fp / cross_app
+    tier: Mapped[str] = mapped_column(String(32), nullable=False)
+    species_compat: Mapped[list[str]] = mapped_column(
+        _jsonb(), nullable=False, default=list, server_default=text("'[]'")
+    )
+    extra_metadata: Mapped[dict] = mapped_column(
+        "metadata", _jsonb(), nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+
 class GamificationOutboxEvent(Base):
     """Webhook fan-out outbox. ADR-009 §2.2 / ADR-007 outbox pattern.
 
