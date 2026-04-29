@@ -348,6 +348,34 @@ def parse_level_unlock(unlock_condition: str) -> int | None:
         return None
 
 
+# ── Mascot manifest (catalog §0 / ADR-009 §2.1) ───────────────────────────
+
+
+# Species supported by the user-pet system (catalog §6.1 outfit compatibility
+# also references these). New species must be added here AND have rows in
+# the manifest table.
+MASCOT_SPECIES: tuple[str, ...] = (
+    "cat",
+    "penguin",
+    "hamster",
+    "bear",
+)
+
+# Stages 1-5 map to growth progression (1 = baby / 5 = mature).
+MASCOT_STAGES: tuple[int, ...] = (1, 2, 3, 4, 5)
+
+# Mood is the in-app state — cheerful / sleepy / hungry / etc. Kept loose so
+# Apps can introduce new moods without a server migration; receivers fall
+# back to "neutral" if they don't recognise.
+DEFAULT_MOODS: tuple[str, ...] = (
+    "neutral",
+    "cheerful",
+    "sleepy",
+    "hungry",
+    "celebrating",
+)
+
+
 def level_unlock_outfits_up_to(level: int) -> list[OutfitDef]:
     """All level-tier outfits whose unlock level is <= `level`."""
     out: list[OutfitDef] = []

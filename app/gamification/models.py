@@ -161,6 +161,43 @@ class OutfitCatalog(Base):
     )
 
 
+class MascotManifestEntry(Base):
+    """Asset URL lookup for one (species, stage, mood, outfit_code) combination.
+
+    Apps fetch /mascot-manifest at startup → cache locally → render the right
+    sprite/animation without baking URLs into mobile builds. Updating an asset
+    becomes a server-side row update + cache bust on each App.
+    """
+
+    __tablename__ = "gamification_mascot_manifest"
+    __table_args__ = (
+        UniqueConstraint(
+            "species", "stage", "mood", "outfit_code",
+            name="uq_mascot_manifest_combo",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer(), "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    species: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    stage: Mapped[int] = mapped_column(Integer, nullable=False)
+    mood: Mapped[str] = mapped_column(String(32), nullable=False)
+    outfit_code: Mapped[str] = mapped_column(String(64), nullable=False, default="none")
+    # CDN URLs. Empty string = "asset not yet uploaded"; Apps should treat as
+    # placeholder and fall back to a default sprite.
+    sprite_url: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    animation_url: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class UserOutfit(Base):
     """A user's owned outfits. Composite PK enforces idempotent grant."""
 
