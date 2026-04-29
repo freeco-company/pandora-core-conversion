@@ -30,7 +30,6 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.conversion import cache_invalidator
-
 from app.conversion.models import ConversionEvent, LifecycleTransition
 from app.conversion.mothership import get_mothership_client
 
