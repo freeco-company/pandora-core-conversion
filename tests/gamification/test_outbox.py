@@ -36,12 +36,12 @@ def _patch_httpx_with_handler(monkeypatch, handler) -> None:
 
 @pytest.fixture(autouse=True)
 def _consumer_env(monkeypatch):
-    """Default to a single configured consumer 'dodo' for these tests."""
-    monkeypatch.setenv("GAMIFICATION_CONSUMER_DODO_URL", "https://dodo.test/webhook")
-    monkeypatch.setenv("GAMIFICATION_CONSUMER_DODO_SECRET", "dodo-secret")
+    """Default to a single configured consumer 'meal' for these tests."""
+    monkeypatch.setenv("GAMIFICATION_CONSUMER_MEAL_URL", "https://meal.test/webhook")
+    monkeypatch.setenv("GAMIFICATION_CONSUMER_MEAL_SECRET", "meal-secret")
     # Force settings to reload
     get_settings.cache_clear()
-    monkeypatch.setattr(get_settings(), "gamification_consumers", "dodo", raising=False)
+    monkeypatch.setattr(get_settings(), "gamification_consumers", "meal", raising=False)
     yield
     get_settings.cache_clear()
 
@@ -60,7 +60,7 @@ def settings_with_consumers(monkeypatch):
 async def test_enqueue_writes_one_row_per_configured_consumer(
     db_session, monkeypatch, settings_with_consumers
 ):
-    settings_with_consumers("dodo,jerosse")
+    settings_with_consumers("meal,jerosse")
     monkeypatch.setenv("GAMIFICATION_CONSUMER_JEROSSE_URL", "https://jerosse.test/webhook")
     monkeypatch.setenv("GAMIFICATION_CONSUMER_JEROSSE_SECRET", "j-secret")
     user = uuid4()
@@ -74,7 +74,7 @@ async def test_enqueue_writes_one_row_per_configured_consumer(
     )
 
     assert len(rows) == 2
-    assert {r.consumer for r in rows} == {"dodo", "jerosse"}
+    assert {r.consumer for r in rows} == {"meal", "jerosse"}
     assert all(r.event_id == "gamification.level_up.42" for r in rows)
     assert all(r.status == "pending" for r in rows)
 
@@ -130,7 +130,7 @@ async def test_level_up_ingest_enqueues_outbox_row(db_session):
     assert len(rows) == 1
     row = rows[0]
     assert row.event_type == "gamification.level_up"
-    assert row.consumer == "dodo"
+    assert row.consumer == "meal"
     assert row.payload["new_level"] == 2
     assert row.payload["trigger_event_kind"] == "jerosse.first_order"
 
@@ -139,8 +139,8 @@ async def test_non_level_up_ingest_does_not_enqueue(db_session):
     user = uuid4()
     payload = InternalEventIngestRequest(
         pandora_user_uuid=user,
-        source_app="dodo",
-        event_kind="dodo.meal_logged",  # 5 XP, no level-up from 0
+        source_app="meal",
+        event_kind="meal.meal_logged",  # 5 XP, no level-up from 0
         idempotency_key=f"k-{user}",
         occurred_at=datetime.now(tz=UTC),
         metadata={},
@@ -194,8 +194,8 @@ async def test_dispatch_sends_with_hmac_headers_on_success(
     assert summary["sent"] == 1
     assert summary["retried"] == 0
     assert summary["dead_letter"] == 0
-    assert captured["url"] == "https://dodo.test/webhook"
-    assert _verify_signature(captured["headers"], captured["body"], "dodo-secret")
+    assert captured["url"] == "https://meal.test/webhook"
+    assert _verify_signature(captured["headers"], captured["body"], "meal-secret")
 
     # Row transitioned to sent
     stmt = select(GamificationOutboxEvent).where(
@@ -334,8 +334,8 @@ async def test_consumer_de_configured_dead_letters(db_session, monkeypatch):
         payload={},
     )
     # Drop env vars for the consumer between enqueue and dispatch
-    monkeypatch.delenv("GAMIFICATION_CONSUMER_DODO_URL", raising=False)
-    monkeypatch.delenv("GAMIFICATION_CONSUMER_DODO_SECRET", raising=False)
+    monkeypatch.delenv("GAMIFICATION_CONSUMER_MEAL_URL", raising=False)
+    monkeypatch.delenv("GAMIFICATION_CONSUMER_MEAL_SECRET", raising=False)
 
     def handler(_req: httpx.Request) -> httpx.Response:
         return httpx.Response(200)

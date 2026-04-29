@@ -128,25 +128,25 @@ class EventRule:
 # Subset of catalog §3 — all events listed in docs/group-gamification-catalog.md
 # §3.1-3.6. Keep keys stable: changing keys breaks idempotency_key history.
 EVENT_CATALOG: dict[str, EventRule] = {
-    # --- 3.1 dodo (潘朵拉飲食) ---
-    "dodo.app_opened": EventRule("dodo", 1, "passive", daily_cap_xp=5),
-    "dodo.meal_logged": EventRule(
-        "dodo", 5, "micro", daily_cap_xp=30,
+    # --- 3.1 meal (潘朵拉飲食) ---
+    "meal.app_opened": EventRule("meal", 1, "passive", daily_cap_xp=5),
+    "meal.meal_logged": EventRule(
+        "meal", 5, "micro", daily_cap_xp=30,
         diminishing_after_n=3, diminishing_xp=2,
     ),
-    "dodo.meal_score_80_plus": EventRule("dodo", 10, "micro", daily_cap_xp=30),
-    "dodo.daily_score_80_plus": EventRule("dodo", 15, "milestone", daily_cap_xp=15),
-    "dodo.streak_3": EventRule("dodo", 20, "milestone"),
-    "dodo.streak_7": EventRule("dodo", 50, "milestone"),
-    "dodo.streak_14": EventRule("dodo", 100, "milestone"),
-    "dodo.streak_30": EventRule("dodo", 200, "major"),
-    "dodo.weekly_review_read": EventRule("dodo", 10, "micro"),
-    "dodo.chat_daily": EventRule("dodo", 3, "passive", daily_cap_xp=3),
-    "dodo.weight_logged": EventRule("dodo", 5, "micro", daily_cap_xp=5),
-    "dodo.first_meal_of_day": EventRule("dodo", 5, "micro", daily_cap_xp=5),
-    "dodo.new_food_discovered": EventRule("dodo", 8, "micro", daily_cap_xp=24),
-    "dodo.card_correct": EventRule("dodo", 8, "micro", daily_cap_xp=40),
-    "dodo.card_first_solve": EventRule("dodo", 5, "micro", lifetime_unique=True),
+    "meal.meal_score_80_plus": EventRule("meal", 10, "micro", daily_cap_xp=30),
+    "meal.daily_score_80_plus": EventRule("meal", 15, "milestone", daily_cap_xp=15),
+    "meal.streak_3": EventRule("meal", 20, "milestone"),
+    "meal.streak_7": EventRule("meal", 50, "milestone"),
+    "meal.streak_14": EventRule("meal", 100, "milestone"),
+    "meal.streak_30": EventRule("meal", 200, "major"),
+    "meal.weekly_review_read": EventRule("meal", 10, "micro"),
+    "meal.chat_daily": EventRule("meal", 3, "passive", daily_cap_xp=3),
+    "meal.weight_logged": EventRule("meal", 5, "micro", daily_cap_xp=5),
+    "meal.first_meal_of_day": EventRule("meal", 5, "micro", daily_cap_xp=5),
+    "meal.new_food_discovered": EventRule("meal", 8, "micro", daily_cap_xp=24),
+    "meal.card_correct": EventRule("meal", 8, "micro", daily_cap_xp=40),
+    "meal.card_first_solve": EventRule("meal", 5, "micro", lifetime_unique=True),
     # --- 3.2 jerosse (婕樂纖) ---
     "jerosse.app_opened": EventRule("jerosse", 1, "passive", daily_cap_xp=5),
     "jerosse.product_browsed": EventRule("jerosse", 1, "passive", daily_cap_xp=10),
@@ -231,17 +231,17 @@ TIER_XP_REWARD: dict[str, int] = {
 # ones (xp_reward is derived from tier each seed).
 ACHIEVEMENT_CATALOG: dict[str, AchievementDef] = {
     # 朵朵 (catalog §5.2)
-    "dodo.first_meal": AchievementDef(
-        "dodo.first_meal", "第一餐", "記錄了第一筆餐食", "dodo", "bronze",
+    "meal.first_meal": AchievementDef(
+        "meal.first_meal", "第一餐", "記錄了第一筆餐食", "meal", "bronze",
     ),
-    "dodo.streak_7": AchievementDef(
-        "dodo.streak_7", "一週有你", "連續 7 天打卡", "dodo", "silver",
+    "meal.streak_7": AchievementDef(
+        "meal.streak_7", "一週有你", "連續 7 天打卡", "meal", "silver",
     ),
-    "dodo.streak_30": AchievementDef(
-        "dodo.streak_30", "一個月的陪伴", "連續 30 天打卡", "dodo", "gold",
+    "meal.streak_30": AchievementDef(
+        "meal.streak_30", "一個月的陪伴", "連續 30 天打卡", "meal", "gold",
     ),
-    "dodo.foodie_10": AchievementDef(
-        "dodo.foodie_10", "美食探索家", "圖鑑收集 10 種食物", "dodo", "silver",
+    "meal.foodie_10": AchievementDef(
+        "meal.foodie_10", "美食探索家", "圖鑑收集 10 種食物", "meal", "silver",
     ),
     # 婕樂纖 (catalog §5.2)
     "jerosse.first_browse": AchievementDef(
