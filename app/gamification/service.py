@@ -468,6 +468,22 @@ async def _grant_level_unlocked_outfits(
     return granted
 
 
+async def list_user_achievements(
+    session: AsyncSession, user_uuid: UUID
+) -> list[tuple[UserAchievement, Achievement]]:
+    """Return all (UserAchievement, Achievement) pairs the user has unlocked,
+    oldest first. Empty list for unseen users.
+    """
+    stmt = (
+        select(UserAchievement, Achievement)
+        .join(Achievement, Achievement.code == UserAchievement.code)
+        .where(UserAchievement.pandora_user_uuid == user_uuid)
+        .order_by(UserAchievement.awarded_at.asc())
+    )
+    rows = (await session.execute(stmt)).all()
+    return [(ua, a) for ua, a in rows]
+
+
 async def list_user_outfits(
     session: AsyncSession, user_uuid: UUID
 ) -> list[UserOutfit]:

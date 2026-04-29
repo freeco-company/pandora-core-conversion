@@ -30,8 +30,10 @@ from app.gamification.schemas import (
     SeedAchievementsResponse,
     SeedMascotManifestResponse,
     SeedOutfitsResponse,
+    UserAchievementItem,
     UserOutfitItem,
     UserOutfitsResponse,
+    UserSyncSnapshotResponse,
 )
 
 router = APIRouter()
@@ -204,6 +206,64 @@ async def seed_outfits(
         inserted=inserted,
         updated=updated,
         total=len(catalog.OUTFIT_CATALOG),
+    )
+
+
+@router.get(
+    "/internal/gamification/users/{uuid}/sync",
+    response_model=UserSyncSnapshotResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def get_user_sync_snapshot(
+    uuid: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> UserSyncSnapshotResponse:
+    """JIT reconciliation snapshot for one user (ADR-009 §2.2).
+
+    Returns progression + all unlocked achievements + all owned outfits in a
+    single call so App backends can rebuild their mirror tables when they
+    suspect a webhook gap. Cheap: tens of rows per user max.
+
+    Always returns a baseline LV.1 progression even for users with no
+    progression row yet (mirrors `GET /progression/{uuid}` behaviour).
+    """
+    progression = await service.get_progression(session, uuid)
+    if progression is None:
+        progression_resp = ProgressionResponse(
+            pandora_user_uuid=uuid,
+            total_xp=0,
+            group_level=1,
+            level_name_zh="種子期",
+            level_name_en="Seed",
+            level_anchor_xp=0,
+            xp_to_next_level=catalog.xp_for_level(2),
+        )
+    else:
+        progression_resp = _progression_to_response(progression)
+
+    ach_pairs = await service.list_user_achievements(session, uuid)
+    outfits = await service.list_user_outfits(session, uuid)
+
+    return UserSyncSnapshotResponse(
+        pandora_user_uuid=uuid,
+        progression=progression_resp,
+        achievements=[
+            UserAchievementItem(
+                code=ua.code,
+                tier=a.tier,
+                awarded_at=ua.awarded_at,
+                source_app=ua.source_app,
+            )
+            for ua, a in ach_pairs
+        ],
+        outfits=[
+            UserOutfitItem(
+                code=o.code,
+                awarded_at=o.awarded_at,
+                awarded_via=o.awarded_via,
+            )
+            for o in outfits
+        ],
     )
 
 
