@@ -21,8 +21,8 @@ async def test_rejects_without_secret(client) -> None:
         "/api/v1/internal/gamification/events",
         json={
             "pandora_user_uuid": str(uuid4()),
-            "source_app": "dodo",
-            "event_kind": "dodo.meal_logged",
+            "source_app": "meal",
+            "event_kind": "meal.meal_logged",
             "idempotency_key": "k1",
             "occurred_at": _now(),
         },
@@ -37,8 +37,8 @@ async def test_meal_logged_awards_xp_and_creates_progression(client) -> None:
         headers=_internal_headers(),
         json={
             "pandora_user_uuid": user,
-            "source_app": "dodo",
-            "event_kind": "dodo.meal_logged",
+            "source_app": "meal",
+            "event_kind": "meal.meal_logged",
             "idempotency_key": f"meal-1-{user}",
             "occurred_at": _now(),
         },
@@ -56,8 +56,8 @@ async def test_idempotent_replay_returns_duplicate(client) -> None:
     user = str(uuid4())
     payload = {
         "pandora_user_uuid": user,
-        "source_app": "dodo",
-        "event_kind": "dodo.meal_logged",
+        "source_app": "meal",
+        "event_kind": "meal.meal_logged",
         "idempotency_key": f"meal-dup-{user}",
         "occurred_at": _now(),
     }
@@ -110,7 +110,7 @@ async def test_first_order_lifetime_unique(client) -> None:
 async def test_daily_cap_caps_xp_within_window(client) -> None:
     user = str(uuid4())
     headers = _internal_headers()
-    # dodo.app_opened: 1 XP, daily cap 5
+    # meal.app_opened: 1 XP, daily cap 5
     occurred_at = datetime.now(tz=UTC).isoformat()
     awarded = 0
     for i in range(8):
@@ -119,8 +119,8 @@ async def test_daily_cap_caps_xp_within_window(client) -> None:
             headers=headers,
             json={
                 "pandora_user_uuid": user,
-                "source_app": "dodo",
-                "event_kind": "dodo.app_opened",
+                "source_app": "meal",
+                "event_kind": "meal.app_opened",
                 "idempotency_key": f"open-{user}-{i}",
                 "occurred_at": occurred_at,
             },
@@ -142,8 +142,8 @@ async def test_meal_logged_diminishing_returns(client) -> None:
             headers=headers,
             json={
                 "pandora_user_uuid": user,
-                "source_app": "dodo",
-                "event_kind": "dodo.meal_logged",
+                "source_app": "meal",
+                "event_kind": "meal.meal_logged",
                 "idempotency_key": f"meal-dim-{user}-{i}",
                 "occurred_at": occurred_at,
             },
@@ -163,8 +163,8 @@ async def test_unknown_event_kind_returns_422(client) -> None:
         headers=_internal_headers(),
         json={
             "pandora_user_uuid": user,
-            "source_app": "dodo",
-            "event_kind": "dodo.never_heard_of_this",
+            "source_app": "meal",
+            "event_kind": "meal.never_heard_of_this",
             "idempotency_key": "x",
             "occurred_at": _now(),
         },
@@ -179,8 +179,8 @@ async def test_source_app_mismatch_returns_422(client) -> None:
         headers=_internal_headers(),
         json={
             "pandora_user_uuid": user,
-            "source_app": "jerosse",  # wrong: meal_logged is dodo
-            "event_kind": "dodo.meal_logged",
+            "source_app": "jerosse",  # wrong: meal_logged is meal
+            "event_kind": "meal.meal_logged",
             "idempotency_key": "x",
             "occurred_at": _now(),
         },
@@ -231,8 +231,8 @@ async def test_progression_endpoint_returns_user_state_after_events(client) -> N
         headers=headers,
         json={
             "pandora_user_uuid": user,
-            "source_app": "dodo",
-            "event_kind": "dodo.streak_7",
+            "source_app": "meal",
+            "event_kind": "meal.streak_7",
             "idempotency_key": f"s7-{user}",
             "occurred_at": _now(),
         },
@@ -254,15 +254,15 @@ async def test_daily_cap_resets_next_day(client) -> None:
     day1 = datetime.now(tz=UTC) - timedelta(days=2)
     day2 = datetime.now(tz=UTC) - timedelta(days=1)
 
-    # Burn cap on day 1: dodo.app_opened cap = 5
+    # Burn cap on day 1: meal.app_opened cap = 5
     for i in range(7):
         await client.post(
             "/api/v1/internal/gamification/events",
             headers=headers,
             json={
                 "pandora_user_uuid": user,
-                "source_app": "dodo",
-                "event_kind": "dodo.app_opened",
+                "source_app": "meal",
+                "event_kind": "meal.app_opened",
                 "idempotency_key": f"d1-{user}-{i}",
                 "occurred_at": day1.isoformat(),
             },
@@ -273,8 +273,8 @@ async def test_daily_cap_resets_next_day(client) -> None:
         headers=headers,
         json={
             "pandora_user_uuid": user,
-            "source_app": "dodo",
-            "event_kind": "dodo.app_opened",
+            "source_app": "meal",
+            "event_kind": "meal.app_opened",
             "idempotency_key": f"d2-{user}-1",
             "occurred_at": day2.isoformat(),
         },

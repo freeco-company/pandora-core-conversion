@@ -40,7 +40,7 @@ async def test_bootstrap_validates_min_one_entry(client) -> None:
 
 async def test_bootstrap_caps_batch_at_1000(client) -> None:
     entries = [
-        {"pandora_user_uuid": str(uuid4()), "total_xp": 100, "source_app": "dodo"}
+        {"pandora_user_uuid": str(uuid4()), "total_xp": 100, "source_app": "meal"}
         for _ in range(1001)
     ]
     resp = await client.post(
@@ -64,7 +64,7 @@ async def test_bootstrap_writes_ledger_and_progression_for_new_user(client, db_s
                 {
                     "pandora_user_uuid": str(user),
                     "total_xp": 1000,
-                    "source_app": "dodo",
+                    "source_app": "meal",
                 }
             ]
         },
@@ -88,7 +88,7 @@ async def test_bootstrap_writes_ledger_and_progression_for_new_user(client, db_s
     assert len(ledger) == 1
     assert ledger[0].event_kind == "migration.bootstrap"
     assert ledger[0].xp_delta == 1000
-    assert ledger[0].idempotency_key == f"migration.dodo.bootstrap.{user}"
+    assert ledger[0].idempotency_key == f"migration.meal.bootstrap.{user}"
 
     progression = (
         await db_session.execute(
@@ -107,7 +107,7 @@ async def test_bootstrap_is_idempotent(client) -> None:
             {
                 "pandora_user_uuid": str(user),
                 "total_xp": 250,
-                "source_app": "dodo",
+                "source_app": "meal",
             }
         ]
     }
@@ -138,7 +138,7 @@ async def test_bootstrap_handles_zero_xp_user(client, db_session) -> None:
                 {
                     "pandora_user_uuid": str(user),
                     "total_xp": 0,
-                    "source_app": "dodo",
+                    "source_app": "meal",
                 }
             ]
         },
@@ -152,10 +152,10 @@ async def test_bootstrap_handles_zero_xp_user(client, db_session) -> None:
 
 async def test_bootstrap_does_not_enqueue_outbox_event(client, db_session, monkeypatch):
     """Migration is invisible to apps — no level_up webhook should fire."""
-    monkeypatch.setenv("GAMIFICATION_CONSUMER_DODO_URL", "https://dodo.test/x")
-    monkeypatch.setenv("GAMIFICATION_CONSUMER_DODO_SECRET", "x")
+    monkeypatch.setenv("GAMIFICATION_CONSUMER_MEAL_URL", "https://meal.test/x")
+    monkeypatch.setenv("GAMIFICATION_CONSUMER_MEAL_SECRET", "x")
     monkeypatch.setattr(
-        get_settings(), "gamification_consumers", "dodo", raising=False
+        get_settings(), "gamification_consumers", "meal", raising=False
     )
     user = uuid4()
     await client.post(
@@ -166,7 +166,7 @@ async def test_bootstrap_does_not_enqueue_outbox_event(client, db_session, monke
                 {
                     "pandora_user_uuid": str(user),
                     "total_xp": 5000,
-                    "source_app": "dodo",
+                    "source_app": "meal",
                 }
             ]
         },
@@ -189,9 +189,9 @@ async def test_bootstrap_batch_with_mixed_users(client, db_session) -> None:
         headers=_internal_headers(),
         json={
             "entries": [
-                {"pandora_user_uuid": str(a), "total_xp": 50, "source_app": "dodo"},
-                {"pandora_user_uuid": str(b), "total_xp": 1500, "source_app": "dodo"},
-                {"pandora_user_uuid": str(c), "total_xp": 0, "source_app": "dodo"},
+                {"pandora_user_uuid": str(a), "total_xp": 50, "source_app": "meal"},
+                {"pandora_user_uuid": str(b), "total_xp": 1500, "source_app": "meal"},
+                {"pandora_user_uuid": str(c), "total_xp": 0, "source_app": "meal"},
             ]
         },
     )
@@ -216,8 +216,8 @@ async def test_bootstrap_after_existing_events_does_not_overwrite_progression(
         headers=_internal_headers(),
         json={
             "pandora_user_uuid": str(user),
-            "source_app": "dodo",
-            "event_kind": "dodo.streak_7",
+            "source_app": "meal",
+            "event_kind": "meal.streak_7",
             "idempotency_key": f"real-{user}",
             "occurred_at": "2026-04-29T00:00:00+00:00",
         },
@@ -229,7 +229,7 @@ async def test_bootstrap_after_existing_events_does_not_overwrite_progression(
         headers=_internal_headers(),
         json={
             "entries": [
-                {"pandora_user_uuid": str(user), "total_xp": 5000, "source_app": "dodo"},
+                {"pandora_user_uuid": str(user), "total_xp": 5000, "source_app": "meal"},
             ]
         },
     )
