@@ -13,6 +13,7 @@ from app.auth.jwt_verifier import VerifiedClaims
 from app.auth.middleware import require_jwt
 from app.conversion import lifecycle, service
 from app.conversion.schemas import (
+    AdminLifecycleOverrideRequest,
     EventIngestRequest,
     EventIngestResponse,
     FranchiseeQualifyRequest,
@@ -157,6 +158,42 @@ async def qualify_franchisee_self_use(
         transition = await lifecycle.force_transition(
             session, uuid, "franchisee_self_use", metadata=metadata
         )
+    return {
+        "id": transition.id,
+        "from_status": transition.from_status,
+        "to_status": transition.to_status,
+    }
+
+
+@router.post(
+    "/internal/admin/users/{uuid}/lifecycle/transition",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def admin_lifecycle_override(
+    uuid: UUID,
+    payload: AdminLifecycleOverrideRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Generic admin lifecycle override (any stage → any stage).
+
+    Used by 集團 admin tooling. Records `actor` + `reason` in transition
+    metadata for audit. cache_invalidator (PG-93) auto-fires from
+    `force_transition`, so consumer Apps see the new stage immediately.
+    """
+    metadata: dict = {
+        "source": "admin_override",
+        "actor": payload.actor,
+        "reason": payload.reason,
+        "overridden_at": datetime.utcnow().isoformat(),
+    }
+    try:
+        async with session.begin():
+            transition = await lifecycle.force_transition(
+                session, uuid, payload.to_status, metadata=metadata
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         "id": transition.id,
         "from_status": transition.from_status,

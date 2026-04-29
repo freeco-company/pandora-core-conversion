@@ -87,6 +87,24 @@ class InternalEventIngestRequest(BaseModel):
     customer_id: int | None = None
 
 
+class AdminLifecycleOverrideRequest(BaseModel):
+    """Admin-driven lifecycle stage override (any → any).
+
+    Generalisation of `FranchiseeQualifyRequest`. Used by 集團 admin tooling
+    (e.g. pandora-meal Filament FranchiseLeadResource) when an admin needs to
+    correct lifecycle state outside the natural state machine — e.g. demoting
+    a wrongly-promoted user, or skipping a stage on operator confirmation.
+
+    Auth: X-Internal-Secret. `actor` and `reason` are required for audit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    to_status: str = Field(min_length=1, max_length=32)
+    reason: str = Field(min_length=1, max_length=500)
+    actor: str = Field(min_length=1, max_length=128)
+
+
 class FranchiseeQualifyRequest(BaseModel):
     """Admin-side override for `franchisee_self_use`.
 
