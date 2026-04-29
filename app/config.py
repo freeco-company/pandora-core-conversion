@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     mothership_internal_secret: str = ""
     mothership_timeout: float = 5.0
 
+    # Lifecycle cache-invalidate fan-out (PG-93)
+    # Consumer registry via env: LIFECYCLE_INVALIDATE_CONSUMERS=pandora_meal,...
+    # Per consumer: LIFECYCLE_INVALIDATE_CONSUMER_<NAME>_URL / _SECRET
+    # Empty = no fan-out (transitions still persist; consumers fall back to TTL).
+    lifecycle_invalidate_timeout: float = 3.0
+
     # Gamification webhook fan-out (ADR-009 §2.2)
     # Comma-separated list of consumer names. For each, expect:
     #   GAMIFICATION_CONSUMER_<NAME>_URL

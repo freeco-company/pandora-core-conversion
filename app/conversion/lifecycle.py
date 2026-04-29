@@ -29,6 +29,8 @@ from uuid import UUID
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.conversion import cache_invalidator
+
 from app.conversion.models import ConversionEvent, LifecycleTransition
 from app.conversion.mothership import get_mothership_client
 
@@ -285,6 +287,11 @@ async def evaluate_event(
         )
         session.add(transition)
         await session.flush()
+        cache_invalidator.schedule_invalidate(
+            pandora_user_uuid=pandora_user_uuid,
+            from_status=current,
+            to_status=target,
+        )
         return TransitionResult(
             fired=True,
             from_status=current,
@@ -321,4 +328,9 @@ async def force_transition(
     )
     session.add(transition)
     await session.flush()
+    cache_invalidator.schedule_invalidate(
+        pandora_user_uuid=pandora_user_uuid,
+        from_status=current,
+        to_status=to_status,
+    )
     return transition
