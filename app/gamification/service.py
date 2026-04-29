@@ -239,7 +239,7 @@ async def ingest_event_internal(
         # ADR-009 §6 — auto-grant level-tier outfits the user just unlocked.
         # Idempotent on (uuid, code), so repeat level-ups within the same level
         # band are no-ops.
-        await _grant_level_unlocked_outfits(
+        granted_outfits = await _grant_level_unlocked_outfits(
             session, payload.pandora_user_uuid, leveled_up_to
         )
 
@@ -263,6 +263,25 @@ async def ingest_event_internal(
             },
             ledger_id=entry.id,
         )
+
+        # Fan out a single outfit_unlocked event per level-up batch (codes list)
+        # so each App can mirror wardrobe state without polling. Skipped if no
+        # new outfits crossed an unlock gate this level (e.g. LV.2 → LV.3 has
+        # no outfit between LV.5 / LV.8 / LV.12 / LV.20, etc.).
+        if granted_outfits:
+            await outbox.enqueue_event(
+                session,
+                event_type="gamification.outfit_unlocked",
+                pandora_user_uuid=payload.pandora_user_uuid,
+                payload={
+                    "codes": granted_outfits,
+                    "awarded_via": "level_up",
+                    "trigger_level": leveled_up_to,
+                    "trigger_ledger_id": entry.id,
+                    "occurred_at": payload.occurred_at.isoformat(),
+                },
+                ledger_id=entry.id,
+            )
     return IngestOutcome(
         entry=entry,
         progression=progression,
@@ -346,6 +365,9 @@ async def award_achievement(
             session, progression, xp_delta, occurred_at=payload.occurred_at
         )
         if leveled_up_to is not None:
+            granted_outfits = await _grant_level_unlocked_outfits(
+                session, payload.pandora_user_uuid, leveled_up_to
+            )
             await outbox.enqueue_event(
                 session,
                 event_type="gamification.level_up",
@@ -362,6 +384,20 @@ async def award_achievement(
                 },
                 ledger_id=entry.id,
             )
+            if granted_outfits:
+                await outbox.enqueue_event(
+                    session,
+                    event_type="gamification.outfit_unlocked",
+                    pandora_user_uuid=payload.pandora_user_uuid,
+                    payload={
+                        "codes": granted_outfits,
+                        "awarded_via": "level_up",
+                        "trigger_level": leveled_up_to,
+                        "trigger_ledger_id": entry.id,
+                        "occurred_at": payload.occurred_at.isoformat(),
+                    },
+                    ledger_id=entry.id,
+                )
 
     # Always fan out the achievement event so apps can show the badge.
     await outbox.enqueue_event(
