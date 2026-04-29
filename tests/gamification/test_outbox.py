@@ -135,6 +135,78 @@ async def test_level_up_ingest_enqueues_outbox_row(db_session):
     assert row.payload["trigger_event_kind"] == "jerosse.first_order"
 
 
+async def test_level_up_ingest_enqueues_outfit_unlocked_when_outfits_granted(
+    client, db_session
+):
+    # Seed catalog so outfit FK target exists
+    await client.post(
+        "/api/v1/internal/gamification/outfits/seed", headers=_internal_headers()
+    )
+    user = uuid4()
+
+    # Two referral events → 400 XP → LV.5; LV.5 unlocks "scarf"
+    for i in range(2):
+        resp = await client.post(
+            "/api/v1/internal/gamification/events",
+            headers=_internal_headers(),
+            json={
+                "pandora_user_uuid": str(user),
+                "source_app": "jerosse",
+                "event_kind": "jerosse.referral_signed",
+                "idempotency_key": f"ref-{user}-{i}",
+                "occurred_at": datetime.now(tz=UTC).isoformat(),
+            },
+        )
+        assert resp.status_code == 201
+
+    rows = (
+        await db_session.execute(
+            select(GamificationOutboxEvent).where(
+                GamificationOutboxEvent.pandora_user_uuid == user,
+                GamificationOutboxEvent.event_type == "gamification.outfit_unlocked",
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    payload = rows[0].payload
+    assert "scarf" in payload["codes"]
+    assert payload["awarded_via"] == "level_up"
+    assert payload["trigger_level"] >= 5
+
+
+async def test_level_up_with_no_outfit_gate_does_not_enqueue_outfit_event(
+    client, db_session
+):
+    # Seed catalog
+    await client.post(
+        "/api/v1/internal/gamification/outfits/seed", headers=_internal_headers()
+    )
+    user = uuid4()
+    # jerosse.first_order = 100 XP → LV.2 (no outfit unlocks until LV.5)
+    resp = await client.post(
+        "/api/v1/internal/gamification/events",
+        headers=_internal_headers(),
+        json={
+            "pandora_user_uuid": str(user),
+            "source_app": "jerosse",
+            "event_kind": "jerosse.first_order",
+            "idempotency_key": f"k-{user}",
+            "occurred_at": datetime.now(tz=UTC).isoformat(),
+        },
+    )
+    assert resp.status_code == 201
+
+    rows = (
+        await db_session.execute(
+            select(GamificationOutboxEvent).where(
+                GamificationOutboxEvent.pandora_user_uuid == user,
+                GamificationOutboxEvent.event_type == "gamification.outfit_unlocked",
+            )
+        )
+    ).scalars().all()
+    assert rows == []
+
+
 async def test_non_level_up_ingest_does_not_enqueue(db_session):
     user = uuid4()
     payload = InternalEventIngestRequest(
