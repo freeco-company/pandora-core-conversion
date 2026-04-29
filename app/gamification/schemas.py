@@ -175,3 +175,25 @@ class BootstrapLedgerResponse(BaseModel):
     new_bootstraps: int
     skipped: int
     total_in_request: int
+
+
+class UserAchievementItem(BaseModel):
+    code: str
+    tier: str
+    awarded_at: datetime
+    source_app: str
+
+
+class UserSyncSnapshotResponse(BaseModel):
+    """Full reconciliation snapshot for one user.
+
+    Apps poll this on login or as a webhook-gap fallback to bring local mirror
+    tables (achievements / outfits / progression) back in sync without needing
+    to replay the outbox. Always returns a baseline progression even for users
+    that don't yet have a row (synthesised LV.1).
+    """
+
+    pandora_user_uuid: UUID
+    progression: ProgressionResponse
+    achievements: list[UserAchievementItem]
+    outfits: list[UserOutfitItem]
