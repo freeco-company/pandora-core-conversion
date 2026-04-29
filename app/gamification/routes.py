@@ -17,10 +17,15 @@ from app.gamification.schemas import (
     GrantOutfitRequest,
     GrantOutfitResponse,
     InternalEventIngestRequest,
+    MascotManifestItem,
+    MascotManifestResponse,
+    MascotManifestUpsertRequest,
+    MascotManifestUpsertResponse,
     OutfitCatalogResponse,
     OutfitItem,
     ProgressionResponse,
     SeedAchievementsResponse,
+    SeedMascotManifestResponse,
     SeedOutfitsResponse,
     UserOutfitItem,
     UserOutfitsResponse,
@@ -247,6 +252,81 @@ async def grant_user_outfit(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return GrantOutfitResponse(granted=granted, code=payload.code)
+
+
+@router.get(
+    "/internal/gamification/mascot-manifest",
+    response_model=MascotManifestResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def get_mascot_manifest(
+    species: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> MascotManifestResponse:
+    """List all mascot asset URLs (optionally filtered by species).
+
+    Apps cache this at startup and refresh on a long TTL. Empty `sprite_url` /
+    `animation_url` means the asset isn't yet uploaded — Apps should fall back
+    to a local default sprite for that combination.
+    """
+    rows = await service.list_mascot_manifest(session, species=species)
+    return MascotManifestResponse(
+        entries=[
+            MascotManifestItem(
+                species=r.species,
+                stage=r.stage,
+                mood=r.mood,
+                outfit_code=r.outfit_code,
+                sprite_url=r.sprite_url,
+                animation_url=r.animation_url,
+                updated_at=r.updated_at,
+            )
+            for r in rows
+        ],
+        total=len(rows),
+    )
+
+
+@router.post(
+    "/internal/gamification/mascot-manifest/seed",
+    response_model=SeedMascotManifestResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def seed_mascot_manifest(
+    session: AsyncSession = Depends(get_session),
+) -> SeedMascotManifestResponse:
+    """Bootstrap empty rows for every (species, stage, mood) with
+    outfit_code='none'. URLs are blank — fill in via /upsert when assets are
+    ready. Idempotent.
+    """
+    async with session.begin():
+        inserted, total = await service.seed_mascot_manifest_placeholders(session)
+    return SeedMascotManifestResponse(inserted=inserted, total=total)
+
+
+@router.post(
+    "/internal/gamification/mascot-manifest/upsert",
+    response_model=MascotManifestUpsertResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def upsert_mascot_manifest(
+    payload: MascotManifestUpsertRequest,
+    session: AsyncSession = Depends(get_session),
+) -> MascotManifestUpsertResponse:
+    """Upsert CDN URLs for one or more (species, stage, mood, outfit) combos.
+
+    Used by the asset pipeline / ui-designer console after uploading new
+    sprites. Idempotent — same input twice is a no-op.
+    """
+    async with session.begin():
+        inserted, updated = await service.upsert_mascot_manifest_entries(
+            session, payload.entries
+        )
+    return MascotManifestUpsertResponse(
+        inserted=inserted,
+        updated=updated,
+        total_in_request=len(payload.entries),
+    )
 
 
 @router.post(

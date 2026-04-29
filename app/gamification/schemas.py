@@ -104,3 +104,42 @@ class GrantOutfitRequest(BaseModel):
 class GrantOutfitResponse(BaseModel):
     granted: bool
     code: str
+
+
+class MascotManifestItem(BaseModel):
+    species: str
+    stage: int
+    mood: str
+    outfit_code: str
+    sprite_url: str
+    animation_url: str
+    updated_at: datetime
+
+
+class MascotManifestResponse(BaseModel):
+    entries: list[MascotManifestItem]
+    total: int
+
+
+class SeedMascotManifestResponse(BaseModel):
+    inserted: int
+    total: int
+
+
+class MascotManifestUpsertItem(BaseModel):
+    species: str = Field(..., min_length=1, max_length=32)
+    stage: int = Field(..., ge=1, le=5)
+    mood: str = Field(..., min_length=1, max_length=32)
+    outfit_code: str = Field(default="none", min_length=1, max_length=64)
+    sprite_url: str = Field(default="", max_length=512)
+    animation_url: str = Field(default="", max_length=512)
+
+
+class MascotManifestUpsertRequest(BaseModel):
+    entries: list[MascotManifestUpsertItem] = Field(..., min_length=1)
+
+
+class MascotManifestUpsertResponse(BaseModel):
+    inserted: int
+    updated: int
+    total_in_request: int

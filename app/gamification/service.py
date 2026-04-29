@@ -16,13 +16,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.gamification import catalog, outbox
 from app.gamification.models import (
     Achievement,
+    MascotManifestEntry,
     OutfitCatalog,
     UserAchievement,
     UserOutfit,
     UserProgression,
     XpLedgerEntry,
 )
-from app.gamification.schemas import AwardAchievementRequest, InternalEventIngestRequest
+from app.gamification.schemas import (
+    AwardAchievementRequest,
+    InternalEventIngestRequest,
+    MascotManifestUpsertItem,
+)
 
 # Day boundary used for daily-cap calculation. Catalog spec says "00:00 UTC+8".
 TZ_UTC8 = timezone(timedelta(hours=8))
@@ -465,6 +470,112 @@ async def grant_outfit_manual(
     )
     await session.flush()
     return True
+
+
+async def list_mascot_manifest(
+    session: AsyncSession,
+    *,
+    species: str | None = None,
+) -> list[MascotManifestEntry]:
+    stmt = select(MascotManifestEntry).order_by(
+        MascotManifestEntry.species,
+        MascotManifestEntry.stage,
+        MascotManifestEntry.mood,
+        MascotManifestEntry.outfit_code,
+    )
+    if species is not None:
+        stmt = stmt.where(MascotManifestEntry.species == species)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def seed_mascot_manifest_placeholders(session: AsyncSession) -> tuple[int, int]:
+    """Seed empty placeholder rows for every (species, stage, mood, outfit) combo.
+
+    URLs come up empty — Apps treat empty as "use local fallback sprite".
+    Real CDN URLs land via /upsert when the asset pipeline ships.
+    Returns (inserted_now, total_after).
+    """
+    inserted = 0
+    for species in catalog.MASCOT_SPECIES:
+        for stage in catalog.MASCOT_STAGES:
+            for mood in catalog.DEFAULT_MOODS:
+                # We seed with outfit_code="none"; per-outfit overrides come
+                # via /upsert later. Keeping seed cheap means total ≈
+                # species × stages × moods (4×5×5=100).
+                existing = (
+                    await session.execute(
+                        select(MascotManifestEntry).where(
+                            MascotManifestEntry.species == species,
+                            MascotManifestEntry.stage == stage,
+                            MascotManifestEntry.mood == mood,
+                            MascotManifestEntry.outfit_code == "none",
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing is not None:
+                    continue
+                session.add(
+                    MascotManifestEntry(
+                        species=species,
+                        stage=stage,
+                        mood=mood,
+                        outfit_code="none",
+                        sprite_url="",
+                        animation_url="",
+                    )
+                )
+                inserted += 1
+    await session.flush()
+    total = (
+        await session.execute(select(func.count(MascotManifestEntry.id)))
+    ).scalar_one()
+    return inserted, int(total or 0)
+
+
+async def upsert_mascot_manifest_entries(
+    session: AsyncSession, entries: list[MascotManifestUpsertItem]
+) -> tuple[int, int]:
+    """Insert or update CDN URLs for one or more (species, stage, mood, outfit) combos.
+
+    Returns (inserted, updated).
+    """
+    inserted = 0
+    updated = 0
+    for item in entries:
+        existing = (
+            await session.execute(
+                select(MascotManifestEntry).where(
+                    MascotManifestEntry.species == item.species,
+                    MascotManifestEntry.stage == item.stage,
+                    MascotManifestEntry.mood == item.mood,
+                    MascotManifestEntry.outfit_code == item.outfit_code,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            session.add(
+                MascotManifestEntry(
+                    species=item.species,
+                    stage=item.stage,
+                    mood=item.mood,
+                    outfit_code=item.outfit_code,
+                    sprite_url=item.sprite_url,
+                    animation_url=item.animation_url,
+                )
+            )
+            inserted += 1
+        else:
+            changed = False
+            if existing.sprite_url != item.sprite_url:
+                existing.sprite_url = item.sprite_url
+                changed = True
+            if existing.animation_url != item.animation_url:
+                existing.animation_url = item.animation_url
+                changed = True
+            if changed:
+                updated += 1
+    await session.flush()
+    return inserted, updated
 
 
 async def list_outfit_catalog(session: AsyncSession) -> list[OutfitCatalog]:
