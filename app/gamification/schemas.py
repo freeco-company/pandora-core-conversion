@@ -143,3 +143,35 @@ class MascotManifestUpsertResponse(BaseModel):
     inserted: int
     updated: int
     total_in_request: int
+
+
+class BootstrapLedgerEntry(BaseModel):
+    """One user's pre-existing total_xp to seed into the ledger.
+
+    `source_app` lets the caller tag where the legacy XP came from (typically
+    "dodo" for the Phase B initial migration of dodo's ~50 prod users).
+    """
+
+    pandora_user_uuid: UUID
+    total_xp: int = Field(..., ge=0)
+    source_app: str = Field(default="dodo", min_length=1, max_length=32)
+
+
+class BootstrapLedgerRequest(BaseModel):
+    """Batch request — bulk-bootstrap multiple users in one call."""
+
+    entries: list[BootstrapLedgerEntry] = Field(..., min_length=1, max_length=1000)
+
+
+class BootstrapLedgerResultItem(BaseModel):
+    pandora_user_uuid: UUID
+    bootstrapped: bool  # False = already had a bootstrap entry (idempotent skip)
+    total_xp: int
+    group_level: int
+
+
+class BootstrapLedgerResponse(BaseModel):
+    results: list[BootstrapLedgerResultItem]
+    new_bootstraps: int
+    skipped: int
+    total_in_request: int

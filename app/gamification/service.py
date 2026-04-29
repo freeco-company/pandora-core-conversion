@@ -25,6 +25,7 @@ from app.gamification.models import (
 )
 from app.gamification.schemas import (
     AwardAchievementRequest,
+    BootstrapLedgerEntry,
     InternalEventIngestRequest,
     MascotManifestUpsertItem,
 )
@@ -470,6 +471,78 @@ async def grant_outfit_manual(
     )
     await session.flush()
     return True
+
+
+@dataclass
+class BootstrapOutcome:
+    pandora_user_uuid: UUID
+    bootstrapped: bool
+    total_xp: int
+    group_level: int
+
+
+async def bootstrap_user_ledger(
+    session: AsyncSession, entry: BootstrapLedgerEntry
+) -> BootstrapOutcome:
+    """Seed one user's pre-existing total_xp into the ledger as a single
+    `migration.bootstrap` entry. Idempotent on the caller-side
+    `source_app` + UNIQUE(idempotency_key) — second call is a no-op.
+
+    No outbox event is enqueued here — the migration is invisible to apps
+    by design (the user already had a level locally; this just makes the
+    ledger agree with that state).
+    """
+    idempotency_key = f"migration.{entry.source_app}.bootstrap.{entry.pandora_user_uuid}"
+
+    dup_stmt = select(XpLedgerEntry).where(
+        XpLedgerEntry.source_app == entry.source_app,
+        XpLedgerEntry.idempotency_key == idempotency_key,
+    )
+    dup = (await session.execute(dup_stmt)).scalar_one_or_none()
+    if dup is not None:
+        progression = await _get_or_create_progression(session, entry.pandora_user_uuid)
+        return BootstrapOutcome(
+            pandora_user_uuid=entry.pandora_user_uuid,
+            bootstrapped=False,
+            total_xp=progression.total_xp,
+            group_level=progression.group_level,
+        )
+
+    occurred_at = datetime.now(tz=UTC)
+    ledger_entry = XpLedgerEntry(
+        pandora_user_uuid=entry.pandora_user_uuid,
+        source_app=entry.source_app,
+        event_kind="migration.bootstrap",
+        idempotency_key=idempotency_key,
+        xp_delta=entry.total_xp,
+        occurred_at=occurred_at,
+        extra_metadata={
+            "reason": "phase_b_initial_migration",
+            "source_app": entry.source_app,
+        },
+    )
+    session.add(ledger_entry)
+    await session.flush()
+
+    progression = await _get_or_create_progression(session, entry.pandora_user_uuid)
+    # Use the same _apply_xp_to_progression so level math + name are coherent
+    # — but skip the outbox fan-out (apps already know the user's level).
+    if entry.total_xp > 0 and progression.total_xp == 0:
+        # Pristine progression: bootstrap directly to total_xp.
+        progression.total_xp = entry.total_xp
+        progression.group_level = catalog.level_for_xp(entry.total_xp)
+        progression.level_anchor_xp = catalog.xp_for_level(progression.group_level)
+        zh, en = catalog.level_name(progression.group_level)
+        progression.level_name_zh = zh
+        progression.level_name_en = en
+        await session.flush()
+
+    return BootstrapOutcome(
+        pandora_user_uuid=entry.pandora_user_uuid,
+        bootstrapped=True,
+        total_xp=progression.total_xp,
+        group_level=progression.group_level,
+    )
 
 
 async def list_mascot_manifest(

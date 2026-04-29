@@ -13,6 +13,9 @@ from app.gamification import catalog, outbox, service
 from app.gamification.schemas import (
     AwardAchievementRequest,
     AwardAchievementResponse,
+    BootstrapLedgerRequest,
+    BootstrapLedgerResponse,
+    BootstrapLedgerResultItem,
     EventIngestResponse,
     GrantOutfitRequest,
     GrantOutfitResponse,
@@ -325,6 +328,49 @@ async def upsert_mascot_manifest(
     return MascotManifestUpsertResponse(
         inserted=inserted,
         updated=updated,
+        total_in_request=len(payload.entries),
+    )
+
+
+@router.post(
+    "/internal/gamification/migration/bootstrap-ledger",
+    response_model=BootstrapLedgerResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def bootstrap_ledger(
+    payload: BootstrapLedgerRequest,
+    session: AsyncSession = Depends(get_session),
+) -> BootstrapLedgerResponse:
+    """One-shot Phase B migration: seed each user's pre-existing total_xp into
+    the ledger as a single `migration.bootstrap` entry so future events
+    accumulate from the correct baseline.
+
+    Idempotent on (source_app, idempotency_key=migration.{source_app}.bootstrap.{uuid})
+    — re-running the same input is safe. No outbox fan-out is fired (apps
+    already know each user's level locally; this just makes the ledger agree).
+    """
+    new_count = 0
+    skipped = 0
+    items: list[BootstrapLedgerResultItem] = []
+    async with session.begin():
+        for entry in payload.entries:
+            outcome = await service.bootstrap_user_ledger(session, entry)
+            if outcome.bootstrapped:
+                new_count += 1
+            else:
+                skipped += 1
+            items.append(
+                BootstrapLedgerResultItem(
+                    pandora_user_uuid=outcome.pandora_user_uuid,
+                    bootstrapped=outcome.bootstrapped,
+                    total_xp=outcome.total_xp,
+                    group_level=outcome.group_level,
+                )
+            )
+    return BootstrapLedgerResponse(
+        results=items,
+        new_bootstraps=new_count,
+        skipped=skipped,
         total_in_request=len(payload.entries),
     )
 
