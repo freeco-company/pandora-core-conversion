@@ -132,6 +132,62 @@ async def test_qualify_self_use_force_transitions(client, make_jwt) -> None:
     assert resp2.json()["current_status"] == "franchisee_self_use"
 
 
+async def test_admin_lifecycle_override_requires_secret(client) -> None:
+    resp = await client.post(
+        f"/api/v1/internal/admin/users/{uuid4()}/lifecycle/transition",
+        json={"to_status": "loyalist", "reason": "manual", "actor": "admin@x"},
+    )
+    assert resp.status_code == 401
+
+
+async def test_admin_lifecycle_override_transitions_any_stage(client, make_jwt) -> None:
+    user_uuid = str(uuid4())
+    resp = await client.post(
+        f"/api/v1/internal/admin/users/{user_uuid}/lifecycle/transition",
+        headers=_internal_headers(),
+        json={
+            "to_status": "applicant",
+            "reason": "user requested upgrade after offline call",
+            "actor": "ops@freeco.cc",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["to_status"] == "applicant"
+
+    token = make_jwt(sub=user_uuid)
+    resp2 = await client.get(
+        f"/api/v1/users/{user_uuid}/lifecycle",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp2.json()["current_status"] == "applicant"
+
+
+async def test_admin_lifecycle_override_rejects_invalid_stage(client) -> None:
+    resp = await client.post(
+        f"/api/v1/internal/admin/users/{uuid4()}/lifecycle/transition",
+        headers=_internal_headers(),
+        json={"to_status": "not_a_stage", "reason": "x", "actor": "x"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_admin_lifecycle_override_requires_actor_and_reason(client) -> None:
+    # Missing actor
+    resp = await client.post(
+        f"/api/v1/internal/admin/users/{uuid4()}/lifecycle/transition",
+        headers=_internal_headers(),
+        json={"to_status": "loyalist", "reason": "x"},
+    )
+    assert resp.status_code == 422
+    # Missing reason
+    resp = await client.post(
+        f"/api/v1/internal/admin/users/{uuid4()}/lifecycle/transition",
+        headers=_internal_headers(),
+        json={"to_status": "loyalist", "actor": "x"},
+    )
+    assert resp.status_code == 422
+
+
 async def test_old_qualify_franchisee_endpoint_is_gone(client) -> None:
     """ADR-008: old `qualify-franchisee` route renamed → 404."""
     resp = await client.post(
