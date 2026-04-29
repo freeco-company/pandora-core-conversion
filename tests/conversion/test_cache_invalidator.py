@@ -46,11 +46,11 @@ async def test_invalidate_signs_and_posts(consumer_env):
     captured: list[dict[str, Any]] = []
     transport = _make_transport(captured)
 
-    _OrigClient = httpx.AsyncClient
+    orig_client = httpx.AsyncClient
 
     def _client_factory(*args, **kwargs):
         kwargs.pop("transport", None)
-        return _OrigClient(transport=transport, **kwargs)
+        return orig_client(transport=transport, **kwargs)
 
     user = uuid4()
     with patch.object(cache_invalidator.httpx, "AsyncClient", _client_factory):
@@ -108,11 +108,11 @@ async def test_invalidate_soft_fails_on_5xx(consumer_env, caplog):
     captured: list[dict[str, Any]] = []
     transport = _make_transport(captured, status_code=503)
 
-    _OrigClient = httpx.AsyncClient
+    orig_client = httpx.AsyncClient
 
     def _client_factory(*args, **kwargs):
         kwargs.pop("transport", None)
-        return _OrigClient(transport=transport, **kwargs)
+        return orig_client(transport=transport, **kwargs)
 
     with patch.object(cache_invalidator.httpx, "AsyncClient", _client_factory):
         # Must not raise; logs warning instead
@@ -133,11 +133,11 @@ async def test_invalidate_soft_fails_on_network_error(consumer_env, caplog):
 
     transport = httpx.MockTransport(handler)
 
-    _OrigClient = httpx.AsyncClient
+    orig_client = httpx.AsyncClient
 
     def _client_factory(*args, **kwargs):
         kwargs.pop("transport", None)
-        return _OrigClient(transport=transport, **kwargs)
+        return orig_client(transport=transport, **kwargs)
 
     with patch.object(cache_invalidator.httpx, "AsyncClient", _client_factory):
         await invalidate(
@@ -164,11 +164,11 @@ async def test_invalidate_fans_out_to_multiple_consumers(monkeypatch):
     captured: list[dict[str, Any]] = []
     transport = _make_transport(captured)
 
-    _OrigClient = httpx.AsyncClient
+    orig_client = httpx.AsyncClient
 
     def _client_factory(*args, **kwargs):
         kwargs.pop("transport", None)
-        return _OrigClient(transport=transport, **kwargs)
+        return orig_client(transport=transport, **kwargs)
 
     with patch.object(cache_invalidator.httpx, "AsyncClient", _client_factory):
         await invalidate(
@@ -184,11 +184,11 @@ async def test_schedule_invalidate_inside_loop(consumer_env):
     captured: list[dict[str, Any]] = []
     transport = _make_transport(captured)
 
-    _OrigClient = httpx.AsyncClient
+    orig_client = httpx.AsyncClient
 
     def _client_factory(*args, **kwargs):
         kwargs.pop("transport", None)
-        return _OrigClient(transport=transport, **kwargs)
+        return orig_client(transport=transport, **kwargs)
 
     with patch.object(cache_invalidator.httpx, "AsyncClient", _client_factory):
         schedule_invalidate(
