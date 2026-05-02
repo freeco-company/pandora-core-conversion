@@ -169,13 +169,21 @@ EVENT_CATALOG: dict[str, EventRule] = {
     "jerosse.streak_7": EventRule("jerosse", 50, "milestone"),
     "jerosse.streak_30": EventRule("jerosse", 200, "major"),
     # --- 3.3 calendar (潘朵拉月曆) ---
+    # P0-P6 publisher emit set, mirrors backend `App\Services\Gamification\CalendarEventCatalog`
+    # in github.com/freeco-company/pandora-calendar. Renames here break idempotency_key history.
     "calendar.app_opened": EventRule("calendar", 1, "passive", daily_cap_xp=3),
+    "calendar.first_cycle": EventRule("calendar", 30, "milestone", lifetime_unique=True),
     "calendar.cycle_logged": EventRule("calendar", 5, "micro", daily_cap_xp=5),
     "calendar.symptom_logged": EventRule("calendar", 3, "micro", daily_cap_xp=9),
     "calendar.mood_logged": EventRule("calendar", 3, "micro", daily_cap_xp=3),
+    "calendar.dodo_checkin": EventRule("calendar", 3, "micro", daily_cap_xp=3),
     "calendar.track_7_days": EventRule("calendar", 30, "milestone"),
+    "calendar.streak_30_days": EventRule("calendar", 100, "major"),
+    "calendar.cycle_streak_3_months": EventRule("calendar", 200, "major"),
     "calendar.full_cycle_tracked": EventRule("calendar", 100, "major"),
     "calendar.insight_read": EventRule("calendar", 5, "micro", daily_cap_xp=10),
+    "calendar.pms_pattern_detected": EventRule("calendar", 50, "milestone"),
+    "calendar.pregnancy_logged": EventRule("calendar", 100, "major", lifetime_unique=True),
     # --- 3.4 skin (潘朵拉肌膚) ---
     "skin.app_opened": EventRule("skin", 1, "passive", daily_cap_xp=3),
     "skin.skin_scan": EventRule("skin", 10, "micro", daily_cap_xp=20),
