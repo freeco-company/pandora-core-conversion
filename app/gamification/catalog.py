@@ -147,6 +147,9 @@ EVENT_CATALOG: dict[str, EventRule] = {
     "meal.new_food_discovered": EventRule("meal", 8, "micro", daily_cap_xp=24),
     "meal.card_correct": EventRule("meal", 8, "micro", daily_cap_xp=40),
     "meal.card_first_solve": EventRule("meal", 5, "micro", lifetime_unique=True),
+    # SPEC-fasting-timer Phase 2 — 完成一個達標斷食 session
+    "meal.fasting_completed": EventRule("meal", 10, "micro", daily_cap_xp=20),
+    "meal.fasting_streak_7": EventRule("meal", 80, "milestone"),
     # --- 3.2 jerosse (婕樂纖) ---
     "jerosse.app_opened": EventRule("jerosse", 1, "passive", daily_cap_xp=5),
     "jerosse.product_browsed": EventRule("jerosse", 1, "passive", daily_cap_xp=10),
@@ -242,6 +245,16 @@ ACHIEVEMENT_CATALOG: dict[str, AchievementDef] = {
     ),
     "meal.foodie_10": AchievementDef(
         "meal.foodie_10", "美食探索家", "圖鑑收集 10 種食物", "meal", "silver",
+    ),
+    # SPEC-fasting-timer Phase 2 — 斷食里程碑
+    "meal.fasting_first": AchievementDef(
+        "meal.fasting_first", "斷食初心", "完成第一次斷食 ✨", "meal", "bronze",
+    ),
+    "meal.fasting_streak_7": AchievementDef(
+        "meal.fasting_streak_7", "七天的節奏", "連續 7 天達成斷食", "meal", "silver",
+    ),
+    "meal.fasting_streak_30": AchievementDef(
+        "meal.fasting_streak_30", "斷食一個月", "連續 30 天達成斷食", "meal", "gold",
     ),
     # 婕樂纖 (catalog §5.2)
     "jerosse.first_browse": AchievementDef(
