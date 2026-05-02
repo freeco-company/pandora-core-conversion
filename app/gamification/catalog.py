@@ -162,6 +162,12 @@ EVENT_CATALOG: dict[str, EventRule] = {
     "jerosse.spend_10k_milestone": EventRule("jerosse", 300, "major", lifetime_unique=True),
     "jerosse.subscription_renewed": EventRule("jerosse", 50, "milestone"),
     "jerosse.referral_signed": EventRule("jerosse", 200, "major"),
+    # mother-side hooks added 2026-05-02 to close PandoraGamificationPublisher
+    # KNOWN_EVENT_KINDS contract gap — these were emitted by mother but 422'd here
+    "jerosse.achievement_awarded": EventRule("jerosse", 20, "milestone"),
+    "jerosse.engagement_deep": EventRule("jerosse", 30, "milestone"),
+    "jerosse.streak_7": EventRule("jerosse", 50, "milestone"),
+    "jerosse.streak_30": EventRule("jerosse", 200, "major"),
     # --- 3.3 calendar (潘朵拉月曆) ---
     "calendar.app_opened": EventRule("calendar", 1, "passive", daily_cap_xp=3),
     "calendar.cycle_logged": EventRule("calendar", 5, "micro", daily_cap_xp=5),
