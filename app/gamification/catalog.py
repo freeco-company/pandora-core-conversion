@@ -179,6 +179,14 @@ EVENT_CATALOG: dict[str, EventRule] = {
     "calendar.track_7_days": EventRule("calendar", 30, "milestone"),
     "calendar.full_cycle_tracked": EventRule("calendar", 100, "major"),
     "calendar.insight_read": EventRule("calendar", 5, "micro", daily_cap_xp=10),
+    # calendar backend extras (CalendarEventCatalog.php) added 2026-05-03 to close
+    # publisher / catalog contract gap — these were emitted by calendar but 422'd here
+    "calendar.first_cycle": EventRule("calendar", 30, "milestone", lifetime_unique=True),
+    "calendar.dodo_checkin": EventRule("calendar", 3, "micro", daily_cap_xp=3),
+    "calendar.streak_30_days": EventRule("calendar", 100, "major"),
+    "calendar.cycle_streak_3_months": EventRule("calendar", 200, "major"),
+    "calendar.pms_pattern_detected": EventRule("calendar", 50, "milestone"),
+    "calendar.pregnancy_logged": EventRule("calendar", 100, "major", lifetime_unique=True),
     # --- 3.4 skin (潘朵拉肌膚) ---
     "skin.app_opened": EventRule("skin", 1, "passive", daily_cap_xp=3),
     "skin.skin_scan": EventRule("skin", 10, "micro", daily_cap_xp=20),
