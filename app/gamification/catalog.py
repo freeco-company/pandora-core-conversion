@@ -150,6 +150,8 @@ EVENT_CATALOG: dict[str, EventRule] = {
     # SPEC-fasting-timer Phase 2 — 完成一個達標斷食 session
     "meal.fasting_completed": EventRule("meal", 10, "micro", daily_cap_xp=20),
     "meal.fasting_streak_7": EventRule("meal", 80, "milestone"),
+    # SPEC-healthkit-integration — first daily steps goal hit (>= 6000)
+    "meal.steps_goal_achieved": EventRule("meal", 5, "micro", daily_cap_xp=5),
     # --- 3.2 jerosse (婕樂纖) ---
     "jerosse.app_opened": EventRule("jerosse", 1, "passive", daily_cap_xp=5),
     "jerosse.product_browsed": EventRule("jerosse", 1, "passive", daily_cap_xp=10),
