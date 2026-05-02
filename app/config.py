@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     database_url: str = Field(
-        default="postgresql+asyncpg://pandora:pandora@localhost:5432/pandora_conversion"
+        default="mysql+asyncmy://pandora:pandora@localhost:3306/pandora_conversion"
     )
 
     # Pandora Core Identity

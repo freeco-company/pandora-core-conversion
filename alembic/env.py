@@ -1,4 +1,4 @@
-"""Alembic env. Uses sync URL derived from DATABASE_URL (asyncpg -> psycopg fallback)."""
+"""Alembic env. Uses sync MariaDB URL derived from async DATABASE_URL."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from app.config import get_settings
 # Import models so metadata is populated
 from app.conversion import models  # noqa: F401
 from app.db import Base
+from app.gamification import models as gam_models  # noqa: F401
 
 config = context.config
 
@@ -19,8 +20,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 settings = get_settings()
-# alembic uses sync driver; convert asyncpg URL -> psycopg2 if needed
-sync_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+# alembic uses sync driver; convert asyncmy URL -> pymysql for sync ops.
+sync_url = settings.database_url.replace("mysql+asyncmy://", "mysql+pymysql://")
 config.set_main_option("sqlalchemy.url", sync_url)
 
 target_metadata = Base.metadata

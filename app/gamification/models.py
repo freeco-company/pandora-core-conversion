@@ -14,9 +14,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
-    text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.conversion.models import UUIDType  # reuse the cross-dialect UUID
@@ -24,7 +22,7 @@ from app.db import Base
 
 
 def _jsonb() -> JSON:
-    return JSON().with_variant(JSONB(), "postgresql")
+    return JSON()
 
 
 def _uuid_col() -> UUIDType:
@@ -67,7 +65,7 @@ class XpLedgerEntry(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     extra_metadata: Mapped[dict] = mapped_column(
-        "metadata", _jsonb(), nullable=False, default=dict, server_default=text("'{}'")
+        "metadata", _jsonb(), nullable=False, default=dict
     )
 
 
@@ -114,7 +112,7 @@ class Achievement(Base):
     tier: Mapped[str] = mapped_column(String(16), nullable=False)
     xp_reward: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     extra_metadata: Mapped[dict] = mapped_column(
-        "metadata", _jsonb(), nullable=False, default=dict, server_default=text("'{}'")
+        "metadata", _jsonb(), nullable=False, default=dict
     )
 
 
@@ -154,10 +152,10 @@ class OutfitCatalog(Base):
     # tier: default / level / streak / fp / cross_app
     tier: Mapped[str] = mapped_column(String(32), nullable=False)
     species_compat: Mapped[list[str]] = mapped_column(
-        _jsonb(), nullable=False, default=list, server_default=text("'[]'")
+        _jsonb(), nullable=False, default=list
     )
     extra_metadata: Mapped[dict] = mapped_column(
-        "metadata", _jsonb(), nullable=False, default=dict, server_default=text("'{}'")
+        "metadata", _jsonb(), nullable=False, default=dict
     )
 
 
@@ -251,7 +249,7 @@ class GamificationOutboxEvent(Base):
     )
     consumer: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     payload: Mapped[dict] = mapped_column(
-        _jsonb(), nullable=False, default=dict, server_default=text("'{}'")
+        _jsonb(), nullable=False, default=dict
     )
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="pending", server_default="pending", index=True
