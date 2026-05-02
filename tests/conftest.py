@@ -1,9 +1,9 @@
 """Pytest fixtures.
 
-Tests run against an in-memory aiosqlite database. The PG-specific JSONB / UUID
-columns degrade to JSON / String(36) thanks to `with_variant` in the model
-definitions. The Alembic migration (which uses raw PG DDL for partitioned
-tables) is **not** applied in tests; instead we create tables via metadata.
+Tests run against an in-memory aiosqlite database. Models are dialect-portable
+(JSON columns, UUID stored as CHAR(36)) so the same code runs against MariaDB
+in prod / CI and sqlite in unit tests. Tables created via `Base.metadata` so
+no alembic dependency in tests.
 """
 
 from __future__ import annotations

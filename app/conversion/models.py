@@ -1,10 +1,4 @@
-"""SQLAlchemy models for conversion module. ADR-003 §3.1.
-
-Note on partitioning: `conversion_events` is intended to be PARTITION BY RANGE
-(occurred_at) on PostgreSQL for production. The Alembic migration creates the
-partitioned parent + an initial monthly partition. The ORM treats it as a
-normal table.
-"""
+"""SQLAlchemy models for conversion module. ADR-003 §3.1 (revised 2026-05-02 to MariaDB)."""
 
 from __future__ import annotations
 
@@ -20,10 +14,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
-    text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
@@ -31,26 +22,22 @@ from app.db import Base
 
 
 def _jsonb() -> JSON:
-    """JSONB on PostgreSQL, JSON elsewhere (sqlite for tests)."""
-    return JSON().with_variant(JSONB(), "postgresql")
+    """JSON column — works on MariaDB, sqlite, and any other dialect."""
+    return JSON()
 
 
 class UUIDType(TypeDecorator):
-    """Cross-dialect UUID: native PG UUID + CHAR(36) on sqlite (with bind/load conversion)."""
+    """Portable UUID stored as CHAR(36) — works on MariaDB, sqlite."""
 
     impl = String(36)
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
-        if dialect.name == "postgresql":
-            return dialect.type_descriptor(PG_UUID(as_uuid=True))
         return dialect.type_descriptor(String(36))
 
     def process_bind_param(self, value, dialect):
         if value is None:
             return None
-        if dialect.name == "postgresql":
-            return value
         return str(value) if not isinstance(value, str) else value
 
     def process_result_value(self, value, dialect):
@@ -62,7 +49,6 @@ class UUIDType(TypeDecorator):
 
 
 def _uuid_col() -> UUIDType:
-    """UUID column — native on PostgreSQL, CHAR(36) string on sqlite."""
     return UUIDType()
 
 
@@ -79,7 +65,7 @@ class ConversionEvent(Base):
     app_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     payload: Mapped[dict] = mapped_column(
-        _jsonb(), nullable=False, default=dict, server_default=text("'{}'")
+        _jsonb(), nullable=False, default=dict
     )
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
@@ -109,7 +95,7 @@ class LifecycleTransition(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     extra_metadata: Mapped[dict] = mapped_column(
-        "metadata", _jsonb(), nullable=False, default=dict, server_default=text("'{}'")
+        "metadata", _jsonb(), nullable=False, default=dict
     )
 
 
