@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -182,6 +182,22 @@ class UserAchievementItem(BaseModel):
     tier: str
     awarded_at: datetime
     source_app: str
+
+
+class GroupStreakResponse(BaseModel):
+    """Master cross-App daily-login streak snapshot for one user.
+
+    `today_in_streak` is the convenience flag App backends overlay on their
+    own toast: True = the user has already logged in to *some* App today
+    (Asia/Taipei). False = streak is "live but not yet bumped today" or empty.
+    """
+
+    user_uuid: UUID
+    current_streak: int
+    longest_streak: int
+    last_login_date: date | None = None
+    last_seen_app: str | None = None
+    today_in_streak: bool
 
 
 class UserSyncSnapshotResponse(BaseModel):

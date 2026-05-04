@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date as date_type
 from datetime import datetime
 
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -215,6 +217,50 @@ class UserOutfit(Base):
     )
     # awarded_via: "level_up" / "manual" / future tiers (streak / fp / cross_app)
     awarded_via: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class GroupUserDailyStreak(Base):
+    """Cross-app master daily-login streak per Pandora Core identity uuid.
+
+    Any App's `*.daily_login_streak_extended` event bumps this single row, so a
+    user logging into meal + calendar + jerosse on the same Asia/Taipei day
+    extends one master streak (not three independent ones). Frontend toasts
+    overlay this on top of each App's local streak in Phase 5B.
+
+    `last_login_date` is the local Asia/Taipei calendar date — the bump logic:
+      same day → no-op
+      yesterday → current_streak += 1
+      else → reset to 1
+    `last_seen_app` is observational (which App most recently bumped); not used
+    in math.
+    """
+
+    __tablename__ = "group_user_daily_streaks"
+
+    user_uuid: Mapped[uuid.UUID] = mapped_column(
+        _uuid_col(), primary_key=True, nullable=False
+    )
+    current_streak: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    longest_streak: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_login_date: Mapped[date_type | None] = mapped_column(
+        Date, nullable=True
+    )
+    last_seen_app: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
 
 class GamificationOutboxEvent(Base):
