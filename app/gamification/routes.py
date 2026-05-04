@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.internal import require_internal_secret
 from app.db import get_session
-from app.gamification import catalog, outbox, service
+from app.gamification import catalog, group_streak_service, outbox, service
 from app.gamification.schemas import (
     AwardAchievementRequest,
     AwardAchievementResponse,
@@ -19,6 +20,7 @@ from app.gamification.schemas import (
     EventIngestResponse,
     GrantOutfitRequest,
     GrantOutfitResponse,
+    GroupStreakResponse,
     InternalEventIngestRequest,
     MascotManifestItem,
     MascotManifestResponse,
@@ -37,6 +39,18 @@ from app.gamification.schemas import (
 )
 
 router = APIRouter()
+
+# Tiny per-process TTL cache for the group-streak read endpoint. Apps poll this
+# on every login + on opening certain hero screens; 30s is short enough that a
+# bump from another App becomes visible quickly, long enough to absorb hot
+# bursts. Cache is invalidated explicitly by the ingest path on bump (see
+# `_invalidate_group_streak_cache`).
+_GROUP_STREAK_CACHE_TTL = 30.0
+_group_streak_cache: dict[UUID, tuple[float, GroupStreakResponse]] = {}
+
+
+def _invalidate_group_streak_cache(uuid: UUID) -> None:
+    _group_streak_cache.pop(uuid, None)
 
 
 def _progression_to_response(progression) -> ProgressionResponse:
@@ -75,6 +89,11 @@ async def ingest_event_internal(
         raise HTTPException(status_code=422, detail="unknown event_kind") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Group streak may have moved on this event — drop any stale cache entry
+    # so the next read for this user reflects the new bump immediately.
+    if payload.event_kind.endswith(".daily_login_streak_extended"):
+        _invalidate_group_streak_cache(payload.pandora_user_uuid)
 
     return EventIngestResponse(
         id=outcome.entry.id,
@@ -454,3 +473,49 @@ async def dispatch_outbox(
     async with session.begin():
         summary = await outbox.dispatch_pending(session, limit=limit)
     return summary
+
+
+@router.get(
+    "/internal/group-streak/{uuid}",
+    response_model=GroupStreakResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
+async def get_group_streak(
+    uuid: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> GroupStreakResponse:
+    """Master cross-App daily-login streak for one Pandora Core uuid.
+
+    Apps overlay this on their own per-App streak toast (Phase 5B frontend).
+    30s in-process TTL cache absorbs polling bursts; the ingest path
+    invalidates on bump so a streak extension shows up in ≤1 cache window.
+    Always returns a snapshot (synthesised zero-streak for unseen users) —
+    callers don't need to handle 404.
+    """
+    now_ts = time.monotonic()
+    cached = _group_streak_cache.get(uuid)
+    if cached is not None and cached[0] > now_ts:
+        return cached[1]
+
+    row = await group_streak_service.get(session, uuid)
+    if row is None:
+        resp = GroupStreakResponse(
+            user_uuid=uuid,
+            current_streak=0,
+            longest_streak=0,
+            last_login_date=None,
+            last_seen_app=None,
+            today_in_streak=False,
+        )
+    else:
+        resp = GroupStreakResponse(
+            user_uuid=row.user_uuid,
+            current_streak=row.current_streak,
+            longest_streak=row.longest_streak,
+            last_login_date=row.last_login_date,
+            last_seen_app=row.last_seen_app,
+            today_in_streak=group_streak_service.today_in_streak(row),
+        )
+
+    _group_streak_cache[uuid] = (now_ts + _GROUP_STREAK_CACHE_TTL, resp)
+    return resp

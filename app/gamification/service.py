@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gamification import catalog, outbox
+from app.gamification import catalog, group_streak_service, outbox
 from app.gamification.models import (
     Achievement,
     MascotManifestEntry,
@@ -230,6 +230,17 @@ async def ingest_event_internal(
     )
     session.add(entry)
     await session.flush()
+
+    # Group-level master streak (cross-App). Any App's daily_login_streak_extended
+    # bumps a single shared counter — same Taipei day from another App is a
+    # no-op so users get one streak across meal/calendar/jerosse, not three.
+    if payload.event_kind.endswith(".daily_login_streak_extended"):
+        await group_streak_service.bump(
+            session,
+            user_uuid=payload.pandora_user_uuid,
+            source_app=payload.source_app,
+            occurred_at=payload.occurred_at,
+        )
 
     progression = await _get_or_create_progression(session, payload.pandora_user_uuid)
     leveled_up_to = await _apply_xp_to_progression(
