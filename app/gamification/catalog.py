@@ -152,6 +152,14 @@ EVENT_CATALOG: dict[str, EventRule] = {
     "meal.fasting_streak_7": EventRule("meal", 80, "milestone"),
     # SPEC-healthkit-integration — first daily steps goal hit (>= 6000)
     "meal.steps_goal_achieved": EventRule("meal", 5, "micro", daily_cap_xp=5),
+    # Daily-login streak publisher events (mirrors meal backend
+    # `App\Services\Gamification\StreakPublisher`). Awards XP on streak
+    # extension and milestone unlock (1/3/7/14/21/30/60/100). Idempotency
+    # keyed off (uuid, streak_count, local_date) at publisher.
+    "meal.daily_login_streak_extended": EventRule(
+        "meal", 3, "micro", daily_cap_xp=3,
+    ),
+    "meal.streak_milestone_unlocked": EventRule("meal", 30, "milestone"),
     # --- 3.2 jerosse (婕樂纖) ---
     "jerosse.app_opened": EventRule("jerosse", 1, "passive", daily_cap_xp=5),
     "jerosse.product_browsed": EventRule("jerosse", 1, "passive", daily_cap_xp=10),
@@ -173,6 +181,12 @@ EVENT_CATALOG: dict[str, EventRule] = {
     "jerosse.engagement_deep": EventRule("jerosse", 30, "milestone"),
     "jerosse.streak_7": EventRule("jerosse", 50, "milestone"),
     "jerosse.streak_30": EventRule("jerosse", 200, "major"),
+    # Daily-login streak publisher events (mirrors mother backend
+    # `App\Services\Gamification\StreakPublisher`).
+    "jerosse.daily_login_streak_extended": EventRule(
+        "jerosse", 3, "micro", daily_cap_xp=3,
+    ),
+    "jerosse.streak_milestone_unlocked": EventRule("jerosse", 30, "milestone"),
     # --- 3.3 calendar (潘朵拉月曆) ---
     "calendar.app_opened": EventRule("calendar", 1, "passive", daily_cap_xp=3),
     "calendar.cycle_logged": EventRule("calendar", 5, "micro", daily_cap_xp=5),
@@ -189,6 +203,12 @@ EVENT_CATALOG: dict[str, EventRule] = {
     "calendar.cycle_streak_3_months": EventRule("calendar", 200, "major"),
     "calendar.pms_pattern_detected": EventRule("calendar", 50, "milestone"),
     "calendar.pregnancy_logged": EventRule("calendar", 100, "major", lifetime_unique=True),
+    # Daily-login streak publisher events (mirrors calendar backend
+    # `App\Services\Gamification\StreakPublisher`).
+    "calendar.daily_login_streak_extended": EventRule(
+        "calendar", 3, "micro", daily_cap_xp=3,
+    ),
+    "calendar.streak_milestone_unlocked": EventRule("calendar", 30, "milestone"),
     # --- 3.4 skin (潘朵拉肌膚) ---
     "skin.app_opened": EventRule("skin", 1, "passive", daily_cap_xp=3),
     "skin.skin_scan": EventRule("skin", 10, "micro", daily_cap_xp=20),
