@@ -292,7 +292,11 @@ async def test_bump_emits_structured_log_extended_then_same_day(
     assert "group_streak.bump.same_day" in events
 
     # extras carry slicing dimensions
-    extended = next(r for r in caplog.records if r.__dict__.get("event") == "group_streak.bump.extended")
+    extended = next(
+        r
+        for r in caplog.records
+        if r.__dict__.get("event") == "group_streak.bump.extended"
+    )
     assert extended.__dict__["source_app"] == "meal"
     assert extended.__dict__["new_streak"] == 1
     assert extended.__dict__["prev_streak"] == 0
