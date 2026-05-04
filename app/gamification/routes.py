@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from uuid import UUID
 
@@ -47,6 +48,11 @@ router = APIRouter()
 # `_invalidate_group_streak_cache`).
 _GROUP_STREAK_CACHE_TTL = 30.0
 _group_streak_cache: dict[UUID, tuple[float, GroupStreakResponse]] = {}
+
+# Structured logger for the cross-App streak read path. Mirrors the bump-side
+# logger in group_streak_service so cache effectiveness is observable on the
+# same event_name namespace.
+_GROUP_STREAK_LOG = logging.getLogger("group_streak")
 
 
 def _invalidate_group_streak_cache(uuid: UUID) -> None:
@@ -495,8 +501,22 @@ async def get_group_streak(
     now_ts = time.monotonic()
     cached = _group_streak_cache.get(uuid)
     if cached is not None and cached[0] > now_ts:
+        _GROUP_STREAK_LOG.info(
+            "group_streak.fetch.cache_hit",
+            extra={
+                "event": "group_streak.fetch.cache_hit",
+                "user_uuid": str(uuid),
+            },
+        )
         return cached[1]
 
+    _GROUP_STREAK_LOG.info(
+        "group_streak.fetch.cache_miss",
+        extra={
+            "event": "group_streak.fetch.cache_miss",
+            "user_uuid": str(uuid),
+        },
+    )
     row = await group_streak_service.get(session, uuid)
     if row is None:
         resp = GroupStreakResponse(

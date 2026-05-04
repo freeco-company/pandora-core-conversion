@@ -263,3 +263,66 @@ async def test_cache_invalidates_on_new_bump(client) -> None:
         f"/api/v1/internal/group-streak/{user}", headers=_internal_headers()
     )
     assert r2.json()["current_streak"] == 1
+
+
+# ── structured logging ────────────────────────────────────────────────
+
+
+async def test_bump_emits_structured_log_extended_then_same_day(
+    db_session, caplog
+) -> None:
+    """First bump → `group_streak.bump.extended`; same-day repeat from another
+    App → `group_streak.bump.same_day`. log records carry `extra` keys for
+    JSON formatter / aggregator slicing."""
+    import logging
+
+    user = uuid4()
+    today = _at_taipei_midday(0)
+
+    with caplog.at_level(logging.INFO, logger="group_streak"):
+        await group_streak_service.bump(
+            db_session, user_uuid=user, source_app="meal", occurred_at=today
+        )
+        await group_streak_service.bump(
+            db_session, user_uuid=user, source_app="calendar", occurred_at=today
+        )
+
+    events = [r.__dict__.get("event") for r in caplog.records if r.name == "group_streak"]
+    assert "group_streak.bump.extended" in events
+    assert "group_streak.bump.same_day" in events
+
+    # extras carry slicing dimensions
+    extended = next(r for r in caplog.records if r.__dict__.get("event") == "group_streak.bump.extended")
+    assert extended.__dict__["source_app"] == "meal"
+    assert extended.__dict__["new_streak"] == 1
+    assert extended.__dict__["prev_streak"] == 0
+
+
+async def test_fetch_emits_cache_miss_then_hit(client, db_session, caplog) -> None:
+    """First GET is cache_miss; second within TTL is cache_hit."""
+    import logging
+
+    user = uuid4()
+    await group_streak_service.bump(
+        db_session,
+        user_uuid=user,
+        source_app="meal",
+        occurred_at=_at_taipei_midday(0),
+    )
+    await db_session.commit()
+    _group_streak_cache.clear()
+
+    with caplog.at_level(logging.INFO, logger="group_streak"):
+        await client.get(
+            f"/api/v1/internal/group-streak/{user}", headers=_internal_headers()
+        )
+        await client.get(
+            f"/api/v1/internal/group-streak/{user}", headers=_internal_headers()
+        )
+
+    events = [
+        r.__dict__.get("event")
+        for r in caplog.records
+        if r.name == "group_streak" and r.__dict__.get("event", "").startswith("group_streak.fetch")
+    ]
+    assert events == ["group_streak.fetch.cache_miss", "group_streak.fetch.cache_hit"]

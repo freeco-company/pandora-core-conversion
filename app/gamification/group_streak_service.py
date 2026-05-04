@@ -19,6 +19,7 @@ double-count because last_login_date already moved forward.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from uuid import UUID
@@ -30,6 +31,11 @@ from app.gamification.models import GroupUserDailyStreak
 
 # Asia/Taipei = UTC+8, no DST. Match StreakPublisher day boundary across Apps.
 TZ_TAIPEI = timezone(timedelta(hours=8))
+
+# Structured logger for cross-App streak observability. Each `bump` produces
+# one log line with `extra={...}` so a JSON formatter / log aggregator can
+# slice on event_kind / source_app without regex parsing the message.
+LOG = logging.getLogger("group_streak")
 
 
 def _to_taipei_date(occurred_at: datetime) -> date:
@@ -78,6 +84,17 @@ async def bump(
         )
         session.add(row)
         await session.flush()
+        LOG.info(
+            "group_streak.bump.extended",
+            extra={
+                "event": "group_streak.bump.extended",
+                "user_uuid": str(user_uuid),
+                "source_app": source_app,
+                "prev_streak": 0,
+                "new_streak": 1,
+                "first_ever": True,
+            },
+        )
         return GroupStreakOutcome(
             user_uuid=user_uuid,
             current_streak=1,
@@ -91,6 +108,7 @@ async def bump(
     last = row.last_login_date
     reset = False
     bumped = True
+    prev_streak = row.current_streak
 
     if last == today_taipei:
         # Same Taipei day — already bumped by some App today. last_seen_app is
@@ -113,6 +131,43 @@ async def bump(
         row.longest_streak = row.current_streak
 
     await session.flush()
+
+    # Structured log per outcome. Three terminal states map cleanly to one
+    # event name each; downstream dashboards can group on `event` without
+    # parsing extras.
+    if not bumped:
+        LOG.info(
+            "group_streak.bump.same_day",
+            extra={
+                "event": "group_streak.bump.same_day",
+                "user_uuid": str(user_uuid),
+                "source_app": source_app,
+                "current_streak": row.current_streak,
+            },
+        )
+    elif reset:
+        LOG.info(
+            "group_streak.bump.reset",
+            extra={
+                "event": "group_streak.bump.reset",
+                "user_uuid": str(user_uuid),
+                "source_app": source_app,
+                "prev_streak": prev_streak,
+                "new_streak": row.current_streak,
+            },
+        )
+    else:
+        LOG.info(
+            "group_streak.bump.extended",
+            extra={
+                "event": "group_streak.bump.extended",
+                "user_uuid": str(user_uuid),
+                "source_app": source_app,
+                "prev_streak": prev_streak,
+                "new_streak": row.current_streak,
+                "first_ever": False,
+            },
+        )
 
     return GroupStreakOutcome(
         user_uuid=user_uuid,
